@@ -100,6 +100,22 @@
         #laneList::-webkit-scrollbar { width: 6px; }
         #laneList::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
         #laneList::-webkit-scrollbar-track { background: transparent; }
+
+        .lane-label-container {
+            background: rgba(0,0,0,0.7); color: white; border: 1px solid rgba(255,255,255,0.5);
+            border-radius: 50%; width: 22px; height: 22px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 11px; font-weight: 800; box-shadow: 0 2px 4px rgba(0,0,0,0.8);
+            backdrop-filter: blur(4px); pointer-events: none;
+        }
+
+        .sg-label-container {
+            color: #fff; border-radius: 4px; font-size: 10px; font-weight: 800;
+            text-align: center; line-height: 18px; white-space: nowrap;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.8); padding: 0 6px;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.9);
+            border: 1px solid rgba(255,255,255,0.3); pointer-events: none;
+        }
     </style>
 </head>
 <body>
@@ -142,7 +158,14 @@
     L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', { maxZoom: 22, maxNativeZoom: 19, attribution: 'Google' }).addTo(map);
     L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-    const groups = { casing: L.layerGroup().addTo(map), lanes: L.layerGroup().addTo(map), nodes: L.layerGroup().addTo(map), temp: L.layerGroup().addTo(map) };
+    const groups = {
+        casing: L.layerGroup().addTo(map),
+        lanes: L.layerGroup().addTo(map),
+        connections: L.layerGroup().addTo(map),
+        labels: L.layerGroup().addTo(map),
+        nodes: L.layerGroup().addTo(map),
+        temp: L.layerGroup().addTo(map)
+    };
 
     const MANEUVERS = [
         "maneuverStraightAllowed", "maneuverLeftAllowed", "maneuverRightAllowed", "maneuverUTurnAllowed",
@@ -164,6 +187,8 @@
         { label: "Caution (0020)", value: "0020" },
         { label: "Reserved (0010)", value: "0010" }
     ];
+
+    const SG_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#14b8a6', '#f43f5e', '#84cc16', '#06b6d4', '#d946ef'];
 
     let state = {
         originalJson: null,
@@ -337,7 +362,6 @@
                         <label class="checkbox-item">
                             <input type="checkbox" ${isMoving ? 'checked' : ''} onchange="toggleMoveMode(${lane.id}, this.checked)">
                             <span style="color:white; font-weight:700;">Move Whole Lane</span>
-                            ${isMoving ? '<span class="move-mode-label">DRAG ANY NODE</span>' : ''}
                         </label>
                     </div>
 
@@ -473,7 +497,7 @@
     function updateLaneId(oldId, newIdStr) {
         const newId = parseInt(newIdStr);
         if (state.uiLanes.find(l => l.id === newId)) {
-            alert("ID " + newId + " is already used by another lane.");
+            alert("ID duplicate");
             renderSidebar();
             return;
         }
@@ -513,7 +537,7 @@
 
     function updateConnection(id, idx, key, val) {
         const lane = state.uiLanes.find(l => l.id === id);
-        if(lane && lane.connections[idx]) { lane.connections[idx][key] = val; updateJson(); }
+        if(lane && lane.connections[idx]) { lane.connections[idx][key] = val; updateJson(); refreshVisuals(); }
     }
 
     function deleteLane(id, e) {
@@ -640,13 +664,65 @@
         return hex;
     }
 
+    function getIntersectionPoint(A, B, C, D) {
+        if (A.lat === B.lat && A.lng === B.lng) return {lat: (B.lat + C.lat)/2, lng: (B.lng + C.lng)/2};
+        if (C.lat === D.lat && C.lng === D.lng) return {lat: (B.lat + C.lat)/2, lng: (B.lng + C.lng)/2};
+
+        const a1 = B.lat - A.lat;
+        const b1 = A.lng - B.lng;
+        const c1 = a1 * A.lng + b1 * A.lat;
+
+        const a2 = D.lat - C.lat;
+        const b2 = C.lng - D.lng;
+        const c2 = a2 * C.lng + b2 * C.lat;
+
+        const det = a1 * b2 - a2 * b1;
+        if (Math.abs(det) < 1e-10) {
+            return { lat: (B.lat + C.lat) / 2, lng: (B.lng + C.lng) / 2 };
+        }
+        const x = (b2 * c1 - b1 * c2) / det;
+        const y = (a1 * c2 - a2 * c1) / det;
+
+        const distBC = Math.hypot(B.lat - C.lat, B.lng - C.lng);
+        const distB = Math.hypot(B.lat - y, B.lng - x);
+        const distC = Math.hypot(C.lat - y, C.lng - x);
+
+        const dotB = (x - B.lng)*(B.lng - A.lng) + (y - B.lat)*(B.lat - A.lat);
+        const dotC = (C.lng - x)*(D.lng - C.lng) + (C.lat - y)*(D.lat - C.lat);
+
+        if (distB > distBC * 2 || distC > distBC * 2 || dotB < 0 || dotC < 0) {
+            return { lat: (B.lat + C.lat) / 2, lng: (B.lng + C.lng) / 2 };
+        }
+
+        return { lat: y, lng: x };
+    }
+
+    function generateBezier(p0, p1, p2, steps = 20) {
+        const pts = [];
+        for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            const u = 1 - t;
+            const lat = u*u*p0.lat + 2*u*t*p1.lat + t*t*p2.lat;
+            const lng = u*u*p0.lng + 2*u*t*p1.lng + t*t*p2.lng;
+            pts.push({lat, lng});
+        }
+        return pts;
+    }
+
     function refreshVisuals() {
-        groups.casing.clearLayers(); groups.lanes.clearLayers(); groups.nodes.clearLayers();
+        groups.casing.clearLayers();
+        groups.lanes.clearLayers();
+        groups.connections.clearLayers();
+        groups.labels.clearLayers();
+        groups.nodes.clearLayers();
+
         if(state.refPoint) {
             L.circleMarker([state.refPoint.lat, state.refPoint.lng], { radius: 8, color: '#fff', fillColor: '#fbbf24', fillOpacity: 1 }).addTo(groups.lanes).bindTooltip("REF");
         }
 
         state.uiLanes.forEach(lane => {
+            if (lane.points.length === 0) return;
+
             const isSelected = (lane.id === state.editingId);
             const casingColor = isSelected ? '#fbbf24' : '#000';
             const casingWeight = isSelected ? 14 : 8;
@@ -663,6 +739,61 @@
                 casing.bringToFront();
                 core.bringToFront();
             }
+
+            let labelPt;
+            const ptCount = lane.points.length;
+
+            if (ptCount === 1) {
+                labelPt = lane.points[0];
+            } else {
+                let pStart = lane.points[0];
+                let pEnd = lane.points[1];
+
+                labelPt = {
+                    lat: (pStart.lat + pEnd.lat) / 2,
+                    lng: (pStart.lng + pEnd.lng) / 2
+                };
+            }
+
+            const labelIcon = L.divIcon({
+                className: 'lane-label',
+                html: `<div class="lane-label-container">${lane.id}</div>`,
+                iconSize: [22, 22],
+                iconAnchor: [11, 11]
+            });
+            L.marker(labelPt, { icon: labelIcon, interactive: false }).addTo(groups.labels);
+
+            lane.connections.forEach(conn => {
+                const destLane = state.uiLanes.find(l => l.id === conn.lane);
+                if (!destLane || destLane.points.length === 0) return;
+
+                const B = lane.points[0];
+                const A = lane.points.length > 1 ? lane.points[1] : B;
+
+                const C = destLane.points[0];
+                const D = destLane.points.length > 1 ? destLane.points[1] : C;
+
+                const P1 = getIntersectionPoint(A, B, C, D);
+                const bezierPts = generateBezier(B, P1, C, 20);
+
+                const sgColor = SG_COLORS[conn.signal % SG_COLORS.length] || '#a8a29e';
+
+                L.polyline(bezierPts, {
+                    color: sgColor,
+                    weight: 6,
+                    opacity: 0.6,
+                    dashArray: '8, 8'
+                }).addTo(groups.connections);
+
+                const curveMidPt = bezierPts[Math.floor(bezierPts.length / 2)];
+                const sgIcon = L.divIcon({
+                    className: 'sg-label',
+                    html: `<div class="sg-label-container" style="background:${sgColor}cc;">SG:${conn.signal}</div>`,
+                    iconSize: [40, 20],
+                    iconAnchor: [20, 10]
+                });
+                L.marker(curveMidPt, { icon: sgIcon, interactive: false }).addTo(groups.labels);
+            });
 
             lane._casing = casing;
             lane._core = core;
