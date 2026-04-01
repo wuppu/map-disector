@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>V2X Map Editor</title>
+    <title>V2X Map Editor Standard</title>
 
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
@@ -50,7 +50,7 @@
 
         .btn-group { display: flex; gap: 8px; }
         .btn { flex: 1; padding: 10px; border: none; border-radius: 6px; font-weight: 700; font-size: 12px; cursor: pointer; transition: 0.2s; color: white; }
-        .btn-blue { background: var(--primary); } .btn-green { background: var(--success); } .btn-gray { background: #334155; border: 1px solid var(--border); }
+        .btn-blue { background: var(--primary); } .btn-green { background: #8b5cf6; } .btn-gray { background: #334155; border: 1px solid var(--border); }
         .btn:hover { filter: brightness(1.1); }
         .btn-sm { padding: 4px 8px; font-size: 11px; width: auto; flex: none; }
 
@@ -79,6 +79,12 @@
         .conn-list { display: flex; flex-direction: column; gap: 6px; }
         .conn-item { display: flex; gap: 6px; align-items: center; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px; border: 1px solid var(--border); }
 
+        .node-list-container { max-height: 150px; overflow-y: auto; background: rgba(0,0,0,0.3); border-radius: 4px; padding: 6px; margin-top: 6px; }
+        .node-item { border-bottom: 1px solid rgba(255,255,255,0.1); padding: 8px 4px; }
+        .node-item:last-child { border-bottom: none; }
+        .node-header { color: #60a5fa; font-weight: bold; font-size: 11px; margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center; }
+        .node-coords { color: #94a3b8; font-family: monospace; font-size: 10px; margin-top: 4px; }
+
         .badge { padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 800; }
         .bg-in { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
         .bg-out { background: rgba(239, 68, 68, 0.2); color: #f87171; }
@@ -94,19 +100,34 @@
         .node-handle { background: white; border: 2px solid black; border-radius: 50%; cursor: grab; }
         .node-handle:hover { transform: scale(1.3); border-color: var(--primary); }
 
+        .node-arrow-wrapper { cursor: grab; display: flex; justify-content: center; align-items: center; }
+        .node-arrow-rotator { width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; transform-origin: center; }
+        .node-arrow {
+            width: 0; height: 0;
+            border-left: 7px solid transparent;
+            border-right: 7px solid transparent;
+            border-bottom: 14px solid #fff;
+            transition: transform 0.1s, border-bottom-color 0.1s;
+            filter: drop-shadow(0 2px 2px rgba(0,0,0,0.8));
+        }
+        .node-arrow-wrapper:hover .node-arrow {
+            transform: scale(1.5);
+            border-bottom-color: var(--primary) !important;
+        }
+
         .move-mode-active { border: 2px solid var(--warning); padding: 4px; border-radius: 4px; background: rgba(245, 158, 11, 0.1); }
         .move-mode-label { color: var(--warning); font-weight: bold; font-size: 11px; margin-left: 5px; }
 
-        #laneList::-webkit-scrollbar { width: 6px; }
-        #laneList::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
-        #laneList::-webkit-scrollbar-track { background: transparent; }
+        #configScrollArea::-webkit-scrollbar { width: 6px; }
+        #configScrollArea::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+        #configScrollArea::-webkit-scrollbar-track { background: transparent; }
 
         .lane-label-container {
-            background: rgba(0,0,0,0.7); color: white; border: 1px solid rgba(255,255,255,0.5);
+            background: rgba(0,0,0,0.8); color: white; border: 1px solid rgba(255,255,255,0.6);
             border-radius: 50%; width: 22px; height: 22px;
             display: flex; align-items: center; justify-content: center;
-            font-size: 11px; font-weight: 800; box-shadow: 0 2px 4px rgba(0,0,0,0.8);
-            backdrop-filter: blur(4px); pointer-events: none;
+            font-size: 11px; font-weight: 800; box-shadow: 0 2px 5px rgba(0,0,0,0.9);
+            pointer-events: none;
         }
 
         .sg-label-container {
@@ -125,22 +146,26 @@
 
 <div id="sidebar" class="sidebar">
     <div class="header">
-        <span class="title">V2X Map Editor</span>
+        <span class="title">V2X Map Editor Standard</span>
         <button class="toggle-btn" onclick="closeSidebar()">×</button>
     </div>
 
     <div class="content">
         <div class="btn-group">
             <button class="btn btn-blue" onclick="startDrawing()">+ Draw Lane</button>
-            <button class="btn btn-green" onclick="handleSaveAndRefresh()">Save JSON</button>
+            <button class="btn btn-green" onclick="normalizeAndSave()">Normalize & Save</button>
         </div>
 
         <div style="flex:1; display:flex; flex-direction:column; overflow:hidden;">
             <div style="font-size:11px; font-weight:700; color:#94a3b8; margin-bottom:10px; display:flex; justify-content:space-between;">
-                <span>LANE CONFIGURATION</span>
+                <span>CONFIGURATION</span>
                 <span id="laneCount">0 Lanes</span>
             </div>
-            <div id="laneList" style="overflow-y:auto; flex:1;"></div>
+
+            <div id="configScrollArea" style="overflow-y:auto; flex:1; display:flex; flex-direction:column;">
+                <div id="intersectionConfig" class="lane-card" style="border-color: rgba(255,255,255,0.2); background: rgba(0,0,0,0.2); margin-bottom: 15px; flex-shrink: 0;"></div>
+                <div id="laneList"></div>
+            </div>
         </div>
 
         <div style="margin-top:auto;">
@@ -193,14 +218,14 @@
     let state = {
         originalJson: null,
         layerType: "intersectionData",
+        intersectionInfo: { name: "", region: 0, id: 0 },
         refPoint: { lat: 36.5, lng: 127.5 },
         uiLanes: [],
         isDrawing: false,
         tempPoints: [],
         tempLine: null,
         editingId: null,
-        movingLaneIds: [],
-        useLatLon: false
+        movingLaneIds: []
     };
 
     function openSidebar() { document.getElementById('sidebar').classList.remove('collapsed'); setTimeout(() => map.invalidateSize(), 350); }
@@ -208,6 +233,76 @@
 
     function sortLanes() {
         state.uiLanes.sort((a, b) => a.id - b.id);
+    }
+
+    function pointLineDistanceMeters(p, a, b, refLat) {
+        const metersPerLat = 111320;
+        const metersPerLng = 111320 * Math.cos(refLat * Math.PI / 180);
+
+        const ax = a.lng * metersPerLng;
+        const ay = a.lat * metersPerLat;
+        const bx = b.lng * metersPerLng;
+        const by = b.lat * metersPerLat;
+        const px = p.lng * metersPerLng;
+        const py = p.lat * metersPerLat;
+
+        const num = Math.abs((bx - ax) * (ay - py) - (ax - px) * (by - ay));
+        const den = Math.hypot(bx - ax, by - ay);
+
+        if (den === 0) {
+            return Math.hypot(px - ax, py - ay);
+        }
+        return num / den;
+    }
+
+    function douglasPeuckerMeters(points, epsilon, refLat) {
+        if (points.length <= 2) return points;
+        let dmax = 0;
+        let index = 0;
+        const end = points.length - 1;
+        for (let i = 1; i < end; i++) {
+            const d = pointLineDistanceMeters(points[i], points[0], points[end], refLat);
+            if (d > dmax) {
+                index = i;
+                dmax = d;
+            }
+        }
+        if (dmax > epsilon) {
+            const rec1 = douglasPeuckerMeters(points.slice(0, index + 1), epsilon, refLat);
+            const rec2 = douglasPeuckerMeters(points.slice(index), epsilon, refLat);
+            return rec1.slice(0, rec1.length - 1).concat(rec2);
+        } else {
+            return [points[0], points[end]];
+        }
+    }
+
+    function enforceMaxNodeDistance(points, maxDist, refLat) {
+        if (points.length <= 1) return points;
+        const result = [points[0]];
+        const metersPerLat = 111320;
+        const metersPerLng = 111320 * Math.cos(refLat * Math.PI / 180);
+
+        for (let i = 0; i < points.length - 1; i++) {
+            const p1 = points[i];
+            const p2 = points[i+1];
+
+            const dx = (p2.lng - p1.lng) * metersPerLng;
+            const dy = (p2.lat - p1.lat) * metersPerLat;
+            const dist = Math.hypot(dx, dy);
+
+            if (dist > maxDist) {
+                const segments = Math.ceil(dist / maxDist);
+                for (let j = 1; j < segments; j++) {
+                    const ratio = j / segments;
+                    result.push({
+                        lat: p1.lat + (p2.lat - p1.lat) * ratio,
+                        lng: p1.lng + (p2.lng - p1.lng) * ratio
+                    });
+                }
+            }
+            result.push(p2);
+        }
+        return result;
     }
 
     function parseAndRender() {
@@ -233,6 +328,12 @@
             const containerObj = containerArr[0];
             if (!containerObj.refPoint) throw new Error("No refPoint found");
 
+            state.intersectionInfo = {
+                name: containerObj.name || "",
+                region: containerObj.id?.region || 0,
+                id: containerObj.id?.id || 0
+            };
+
             state.refPoint = {
                 lat: containerObj.refPoint.lat / 10000000,
                 lng: containerObj.refPoint.long / 10000000
@@ -240,7 +341,6 @@
             map.setView([state.refPoint.lat, state.refPoint.lng], 18);
 
             state.uiLanes = [];
-            state.useLatLon = false;
 
             let sourceLaneSet = [];
             if (state.layerType === "generalMapData") {
@@ -250,11 +350,6 @@
             }
 
             if (sourceLaneSet.length > 0) {
-                const hasLatLon = sourceLaneSet.some(l =>
-                    l.nodeList && l.nodeList.nodes && l.nodeList.nodes.some(n => n.delta && n.delta['node-LatLon'])
-                );
-                if (hasLatLon) state.useLatLon = true;
-
                 sourceLaneSet.forEach(l => {
                     const points = calculatePoints(l.nodeList.nodes, state.refPoint);
 
@@ -326,12 +421,108 @@
         return pts;
     }
 
+    function updateIntersectionProp(key, val) {
+        if (key === 'region' || key === 'id') val = parseInt(val) || 0;
+        state.intersectionInfo[key] = val;
+        updateJson();
+    }
+
+    function updateRefPoint(key, val) {
+        val = parseFloat(val) || 0;
+        if (isNaN(val)) return;
+        state.refPoint[key] = val;
+        map.setView([state.refPoint.lat, state.refPoint.lng]);
+        updateJson();
+        refreshVisuals();
+        renderSidebar();
+    }
+
+    function updateNodeXY(laneId, nodeIdx, axis, value) {
+        const lane = state.uiLanes.find(l => l.id === laneId);
+        if (!lane || !lane.points[nodeIdx]) return;
+
+        const valCm = parseInt(value) || 0;
+
+        let prevLat = state.refPoint.lat;
+        let prevLng = state.refPoint.lng;
+        if (nodeIdx > 0) {
+            prevLat = lane.points[nodeIdx - 1].lat;
+            prevLng = lane.points[nodeIdx - 1].lng;
+        }
+
+        const pt = lane.points[nodeIdx];
+        let currentY = Math.round((pt.lat - prevLat) * 11132000);
+        let currentX = Math.round((pt.lng - prevLng) * (11132000 * Math.cos(state.refPoint.lat * Math.PI / 180)));
+
+        if (axis === 'x') currentX = valCm;
+        if (axis === 'y') currentY = valCm;
+
+        const newLat = prevLat + (currentY / 11132000);
+        const newLng = prevLng + (currentX / (11132000 * Math.cos(state.refPoint.lat * Math.PI / 180)));
+
+        lane.points[nodeIdx] = { lat: newLat, lng: newLng };
+
+        updateJson();
+        refreshVisuals();
+        renderSidebar();
+    }
+
+    function deleteNode(laneId, nodeIdx) {
+        const lane = state.uiLanes.find(l => l.id === laneId);
+        if (!lane) return;
+
+        if (lane.points.length <= 1) {
+            alert("At least 1 node is required.");
+            return;
+        }
+
+        lane.points.splice(nodeIdx, 1);
+        updateJson();
+        refreshVisuals();
+        renderSidebar();
+    }
+
     function renderSidebar() {
+        const intersectionContainer = document.getElementById('intersectionConfig');
         const container = document.getElementById('laneList');
-        const scrollPos = container.scrollTop;
-        container.innerHTML = '';
+
         document.getElementById('laneCount').innerText = `${state.uiLanes.length} Lanes`;
 
+        intersectionContainer.innerHTML = `
+            <div class="card-header" style="background: transparent; cursor: default; padding-bottom: 5px;">
+                <span class="card-title">RefPoint Data</span>
+            </div>
+            <div style="padding: 0 12px 12px 12px;">
+                <div class="form-row">
+                    <div class="form-col" style="flex: 2;">
+                        <span class="form-label">Name</span>
+                        <input type="text" class="form-input" value="${state.intersectionInfo.name}" onchange="updateIntersectionProp('name', this.value)">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-col">
+                        <span class="form-label">Region</span>
+                        <input type="number" class="form-input" value="${state.intersectionInfo.region}" onchange="updateIntersectionProp('region', this.value)">
+                    </div>
+                    <div class="form-col">
+                        <span class="form-label">ID</span>
+                        <input type="number" class="form-input" value="${state.intersectionInfo.id}" onchange="updateIntersectionProp('id', this.value)">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-col">
+                        <span class="form-label">Latitude</span>
+                        <input type="number" step="0.0000001" class="form-input" value="${state.refPoint.lat.toFixed(7)}" onchange="updateRefPoint('lat', this.value)">
+                    </div>
+                    <div class="form-col">
+                        <span class="form-label">Longitude</span>
+                        <input type="number" step="0.0000001" class="form-input" value="${state.refPoint.lng.toFixed(7)}" onchange="updateRefPoint('lng', this.value)">
+                    </div>
+                </div>
+            </div>
+        `;
+
+        container.innerHTML = '';
         state.uiLanes.forEach(lane => {
             const el = document.createElement('div');
             const isEditing = (state.editingId === lane.id);
@@ -344,6 +535,40 @@
             let badgeText = 'NONE';
             if (lane.direction === '80') { badgeClass = 'bg-in'; badgeText = 'IN'; }
             else if (lane.direction === '40') { badgeClass = 'bg-out'; badgeText = 'OUT'; }
+
+            let nodesHtml = '<div class="node-list-container">';
+            let prevLat = state.refPoint.lat;
+            let prevLng = state.refPoint.lng;
+
+            lane.points.forEach((pt, idx) => {
+                const dLat = pt.lat - prevLat;
+                const dLng = pt.lng - prevLng;
+                const y = Math.round(dLat * 11132000);
+                const x = Math.round(dLng * (11132000 * Math.cos(state.refPoint.lat * Math.PI / 180)));
+
+                nodesHtml += `
+                    <div class="node-item">
+                        <div class="node-header">
+                            <span>Node ${idx}</span>
+                            <button class="icon-btn del" style="padding: 0px 4px; font-size: 10px;" onclick="deleteNode(${lane.id}, ${idx})">✕</button>
+                        </div>
+                        <div class="form-row" style="margin-bottom: 2px;">
+                            <div class="form-col">
+                                <span class="form-label" style="font-size:9px;">X offset (cm)</span>
+                                <input type="number" class="form-input" value="${x}" onchange="updateNodeXY(${lane.id}, ${idx}, 'x', this.value)">
+                            </div>
+                            <div class="form-col">
+                                <span class="form-label" style="font-size:9px;">Y offset (cm)</span>
+                                <input type="number" class="form-input" value="${y}" onchange="updateNodeXY(${lane.id}, ${idx}, 'y', this.value)">
+                            </div>
+                        </div>
+                        <div class="node-coords">Lat: ${pt.lat.toFixed(7)} | Lng: ${pt.lng.toFixed(7)}</div>
+                    </div>
+                `;
+                prevLat = pt.lat;
+                prevLng = pt.lng;
+            });
+            nodesHtml += '</div>';
 
             el.innerHTML = `
                 <div class="card-header" onclick="selectLane(${lane.id})">
@@ -456,6 +681,9 @@
                         ${lane.connections.length === 0 ? '<span style="color:#666; font-size:11px;">No connections</span>' : ''}
                     </div>
 
+                    <div class="section-title">Nodes Data</div>
+                    ${nodesHtml}
+
                 </div>
             `;
             el.addEventListener('click', (e) => {
@@ -465,13 +693,6 @@
             });
             container.appendChild(el);
         });
-        container.scrollTop = scrollPos;
-    }
-
-    function handleSaveAndRefresh() {
-        updateJson();
-        refreshVisuals();
-        renderSidebar();
     }
 
     function selectLane(id) {
@@ -549,6 +770,70 @@
         }
     }
 
+    function normalizeAndSave() {
+        if (!state.originalJson || state.uiLanes.length === 0) return;
+
+        state.uiLanes.forEach(lane => {
+            const ptCount = lane.points.length;
+            if (ptCount > 1) {
+                const distFirst = Math.hypot(lane.points[0].lat - state.refPoint.lat, lane.points[0].lng - state.refPoint.lng);
+                const distLast = Math.hypot(lane.points[ptCount - 1].lat - state.refPoint.lat, lane.points[ptCount - 1].lng - state.refPoint.lng);
+
+                if (distLast < distFirst) {
+                    lane.points.reverse();
+                }
+            }
+
+            lane.points = douglasPeuckerMeters(lane.points, 0.5, state.refPoint.lat);
+            lane.points = enforceMaxNodeDistance(lane.points, 1310, state.refPoint.lat);
+        });
+
+        const bins = [[], [], [], [], [], [], [], []];
+
+        state.uiLanes.forEach(lane => {
+            if (lane.direction === '00' || lane.points.length < 2) return;
+
+            const pStart = lane.points[0];
+            const pEnd = lane.points[lane.points.length - 1];
+
+            const dy = pEnd.lat - pStart.lat;
+            const dx = (pEnd.lng - pStart.lng) * Math.cos(state.refPoint.lat * Math.PI / 180);
+
+            let heading = Math.atan2(dx, dy) * 180 / Math.PI;
+            heading = (heading + 360) % 360;
+
+            const binIndex = Math.round(heading / 45) % 8;
+            bins[binIndex].push(lane);
+        });
+
+        let currentApproachId = 1;
+        for (let i = 0; i < 8; i++) {
+            if (bins[i].length > 0) {
+                bins[i].forEach(lane => {
+                    lane.approachID = currentApproachId;
+                });
+                currentApproachId++;
+            }
+        }
+
+        state.uiLanes.forEach(lane => {
+            if (lane.connections && lane.connections.length > 0) {
+                let combinedVal = 0;
+                lane.connections.forEach(conn => {
+                    if (conn.maneuver) {
+                        combinedVal |= parseInt(conn.maneuver, 16);
+                    }
+                });
+                lane.maneuvers = hexToBitArray(combinedVal.toString(16).padStart(4, '0'), 12);
+            }
+        });
+
+        updateJson();
+        refreshVisuals();
+        renderSidebar();
+        alert("Normalization Complete.\n- Topology corrected.\n- Nodes optimized.\n- Approach IDs assigned by Heading.\n- Maneuvers aggregated.\n- JSON Saved.");
+    }
+
     function updateJson() {
         if (!state.originalJson) return;
         let root = state.originalJson;
@@ -557,6 +842,14 @@
         let containerArr = state.layerType === "generalMapData" ? mapData.roadSegments : mapData.intersections;
         if (!containerArr || containerArr.length === 0) return;
         let containerObj = containerArr[0];
+
+        containerObj.name = state.intersectionInfo.name;
+        if (!containerObj.id) containerObj.id = {};
+        if (state.intersectionInfo.region) containerObj.id.region = state.intersectionInfo.region;
+        containerObj.id.id = state.intersectionInfo.id;
+
+        containerObj.refPoint.lat = Math.round(state.refPoint.lat * 10000000);
+        containerObj.refPoint.long = Math.round(state.refPoint.lng * 10000000);
 
         let targetLaneSetKey = state.layerType === "generalMapData" ? "roadLaneSet" : "laneSet";
         if (!containerObj[targetLaneSetKey]) containerObj[targetLaneSetKey] = [];
@@ -597,27 +890,15 @@
                 const y_cm = Math.round(dLat * 11132000);
                 const x_cm = Math.round(dLng * (11132000 * Math.cos(state.refPoint.lat * Math.PI / 180)));
 
+                let type = "node-XY6";
                 const max = Math.max(Math.abs(x_cm), Math.abs(y_cm));
+                if(max<=511) type="node-XY1";
+                else if(max<=1023) type="node-XY2";
+                else if(max<=2047) type="node-XY3";
+                else if(max<=4095) type="node-XY4";
+                else if(max<=8191) type="node-XY5";
 
-                let nodeData = {};
-                if (state.useLatLon || max > 32767) {
-                    nodeData = {
-                        "node-LatLon": {
-                            lon: Math.round(pt.lng * 10000000),
-                            lat: Math.round(pt.lat * 10000000)
-                        }
-                    };
-                } else {
-                    let type = "node-XY6";
-                    if(max<=511) type="node-XY1";
-                    else if(max<=1023) type="node-XY2";
-                    else if(max<=2047) type="node-XY3";
-                    else if(max<=4095) type="node-XY4";
-                    else if(max<=8191) type="node-XY5";
-                    nodeData = { [type]: { x: x_cm, y: y_cm } };
-                }
-
-                const node = { delta: nodeData };
+                const node = { delta: { [type]: { x: x_cm, y: y_cm } } };
 
                 if (ui.direction === "80" && idx === 0) {
                     node.attributes = { localNode: ["stopLine"] };
@@ -746,12 +1027,9 @@
             if (ptCount === 1) {
                 labelPt = lane.points[0];
             } else {
-                let pStart = lane.points[0];
-                let pEnd = lane.points[1];
-
                 labelPt = {
-                    lat: (pStart.lat + pEnd.lat) / 2,
-                    lng: (pStart.lng + pEnd.lng) / 2
+                    lat: (lane.points[0].lat + lane.points[1].lat) / 2,
+                    lng: (lane.points[0].lng + lane.points[1].lng) / 2
                 };
             }
 
@@ -811,7 +1089,56 @@
             });
 
             lane.points.forEach((pt, idx) => {
-                const mk = L.marker(pt, { icon: L.divIcon({ className: 'node-handle', iconSize: [10, 10] }), draggable: true }).addTo(groups.nodes);
+                let mkIcon;
+
+                if (lane.direction === '00' || ptCount === 1) {
+                    mkIcon = L.divIcon({ className: 'node-handle', iconSize: [10, 10] });
+                } else {
+                    let angle = 0;
+                    let pStart, pEnd;
+
+                    if (lane.direction === '80') {
+                        if (idx > 0) {
+                            pStart = lane.points[idx];
+                            pEnd = lane.points[idx - 1];
+                        } else {
+                            pStart = lane.points[1];
+                            pEnd = lane.points[0];
+                        }
+                    } else if (lane.direction === '40') {
+                        if (idx < ptCount - 1) {
+                            pStart = lane.points[idx];
+                            pEnd = lane.points[idx + 1];
+                        } else {
+                            pStart = lane.points[idx - 1];
+                            pEnd = lane.points[idx];
+                        }
+                    }
+
+                    if (pStart && pEnd) {
+                        const pStartLayer = map.latLngToLayerPoint(pStart);
+                        const pEndLayer = map.latLngToLayerPoint(pEnd);
+                        const dy = pEndLayer.y - pStartLayer.y;
+                        const dx = pEndLayer.x - pStartLayer.x;
+                        angle = Math.atan2(dy, dx) * 180 / Math.PI;
+                    }
+
+                    const rotation = angle + 90;
+                    const arrowColor = isSelected ? '#f59e0b' : '#ffffff';
+
+                    mkIcon = L.divIcon({
+                        className: 'node-arrow-wrapper',
+                        html: `
+                            <div class="node-arrow-rotator" style="transform: rotate(${rotation}deg);">
+                                <div class="node-arrow" style="border-bottom-color: ${arrowColor};"></div>
+                            </div>
+                        `,
+                        iconSize: [20, 20],
+                        iconAnchor: [10, 10]
+                    });
+                }
+
+                const mk = L.marker(pt, { icon: mkIcon, draggable: true }).addTo(groups.nodes);
                 lane._markers.push(mk);
                 if (isSelected) mk.setZIndexOffset(1000);
 
@@ -847,6 +1174,7 @@
                 mk.on('dragend', () => {
                     updateJson();
                     refreshVisuals();
+                    renderSidebar();
                 });
             });
         });
