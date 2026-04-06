@@ -788,7 +788,7 @@
             lane.points = enforceMaxNodeDistance(lane.points, 1310, state.refPoint.lat);
         });
 
-        const bins = [[], [], [], [], [], [], [], []];
+        const clusters = [];
 
         state.uiLanes.forEach(lane => {
             if (lane.direction === '00' || lane.points.length < 2) return;
@@ -796,28 +796,72 @@
             const pStart = lane.points[0];
             const pEnd = lane.points[lane.points.length - 1];
 
-            const dy = pEnd.lat - pStart.lat;
-            const dx = (pEnd.lng - pStart.lng) * Math.cos(state.refPoint.lat * Math.PI / 180);
+            const dy = pEnd.lat - state.refPoint.lat;
+            const dx = (pEnd.lng - state.refPoint.lng) * Math.cos(state.refPoint.lat * Math.PI / 180);
 
             let heading = Math.atan2(dx, dy) * 180 / Math.PI;
             heading = (heading + 360) % 360;
 
-            const binIndex = Math.round(heading / 45) % 8;
-            bins[binIndex].push(lane);
+            let placed = false;
+
+            for (let c of clusters) {
+                let isClose = false;
+
+                for (let existingLane of c.lanes) {
+                    const existingEnd = existingLane.points[existingLane.points.length - 1];
+                    const distToExisting = pointLineDistanceMeters(pEnd, pEnd, existingEnd, state.refPoint.lat);
+
+                    const actualDist = Math.hypot(
+                        (pEnd.lng - existingEnd.lng) * 111320 * Math.cos(state.refPoint.lat * Math.PI / 180),
+                        (pEnd.lat - existingEnd.lat) * 111320
+                    );
+
+                    if (actualDist < 30) {
+                        isClose = true;
+                        break;
+                    }
+                }
+
+                let diff = Math.abs(c.centerAngle - heading);
+                if (diff > 180) diff = 360 - diff;
+
+                if (isClose || diff <= 30) {
+                    c.lanes.push(lane);
+
+                    let sumDx = 0, sumDy = 0;
+                    c.lanes.forEach(l => {
+                        const lEnd = l.points[l.points.length - 1];
+                        sumDy += lEnd.lat - state.refPoint.lat;
+                        sumDx += (lEnd.lng - state.refPoint.lng) * Math.cos(state.refPoint.lat * Math.PI / 180);
+                    });
+
+                    let newCenter = Math.atan2(sumDx, sumDy) * 180 / Math.PI;
+                    c.centerAngle = (newCenter + 360) % 360;
+
+                    placed = true;
+                    break;
+                }
+            }
+
+            if (!placed) {
+                clusters.push({ centerAngle: heading, lanes: [lane] });
+            }
         });
 
+        clusters.sort((a, b) => a.centerAngle - b.centerAngle);
+
         let currentApproachId = 1;
-        for (let i = 0; i < 8; i++) {
-            if (bins[i].length > 0) {
-                bins[i].forEach(lane => {
-                    lane.approachID = currentApproachId;
-                });
-                currentApproachId++;
-            }
-        }
+        clusters.forEach(c => {
+            c.lanes.forEach(lane => {
+                lane.approachID = currentApproachId;
+            });
+            currentApproachId++;
+        });
 
         state.uiLanes.forEach(lane => {
-            if (lane.connections && lane.connections.length > 0) {
+            if (lane.direction === '40') {
+                delete lane.maneuvers;
+            } else if (lane.connections && lane.connections.length > 0) {
                 let combinedVal = 0;
                 lane.connections.forEach(conn => {
                     if (conn.maneuver) {
@@ -831,7 +875,7 @@
         updateJson();
         refreshVisuals();
         renderSidebar();
-        alert("Normalization Complete.\n- Topology corrected.\n- Nodes optimized.\n- Approach IDs assigned by Heading.\n- Maneuvers aggregated.\n- JSON Saved.");
+        alert("Normalization Complete.\n- Topology corrected.\n- Nodes optimized.\n- Approach IDs assigned via Distance/Heading clustering.\n- Maneuvers adjusted based on Direction.\n- JSON Saved.");
     }
 
     function updateJson() {
@@ -880,7 +924,9 @@
                 laneType: lTypeObj
             };
 
-            orderedLane.maneuvers = bitArrayToHex(ui.maneuvers);
+            if (ui.direction !== '40') {
+                orderedLane.maneuvers = bitArrayToHex(ui.maneuvers);
+            }
 
             const nodeList = [];
             let prevLat = state.refPoint.lat, prevLng = state.refPoint.lng;
