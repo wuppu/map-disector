@@ -137,9 +137,39 @@
             text-shadow: 1px 1px 2px rgba(0,0,0,0.9);
             border: 1px solid rgba(255,255,255,0.3); pointer-events: none;
         }
+
+        /* Custom Modal Styles */
+        .custom-modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.7); z-index: 9999;
+            display: flex; align-items: center; justify-content: center;
+            backdrop-filter: blur(2px);
+        }
+        .custom-modal-box {
+            background: var(--bg-panel); border: 1px solid var(--border);
+            border-radius: 8px; padding: 20px; width: 320px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+            text-align: center; color: white;
+        }
+        .custom-modal-text {
+            font-size: 13px; margin-bottom: 20px; white-space: pre-wrap; line-height: 1.5; color: #e2e8f0;
+        }
+        .custom-modal-actions {
+            display: flex; gap: 10px; justify-content: center;
+        }
     </style>
 </head>
 <body>
+
+<div id="customModal" class="custom-modal-overlay" style="display:none;">
+    <div class="custom-modal-box">
+        <div id="customModalText" class="custom-modal-text"></div>
+        <div class="custom-modal-actions">
+            <button id="customModalBtnCancel" class="btn btn-gray" style="display:none;">Cancel</button>
+            <button id="customModalBtnOk" class="btn btn-blue">OK</button>
+        </div>
+    </div>
+</div>
 
 <div id="drawBanner">DRAWING MODE: Click map to add points. Right-click to Finish.</div>
 <button class="floating-menu-btn" onclick="openSidebar()" title="Open Menu">☰</button>
@@ -256,11 +286,15 @@
     }
 
     function douglasPeuckerMeters(points, epsilon, refLat) {
-        if (points.length <= 2) return points;
+        if (!points || !Array.isArray(points) || points.length <= 2) return points || [];
         let dmax = 0;
         let index = 0;
         const end = points.length - 1;
+
+        if (!points[0] || !points[end]) return points;
+
         for (let i = 1; i < end; i++) {
+            if (!points[i]) continue;
             const d = pointLineDistanceMeters(points[i], points[0], points[end], refLat);
             if (d > dmax) {
                 index = i;
@@ -276,15 +310,25 @@
         }
     }
 
-    function enforceMaxNodeDistance(points, maxDist, refLat) {
-        if (points.length <= 1) return points;
-        const result = [points[0]];
-        const metersPerLat = 111320;
-        const metersPerLng = 111320 * Math.cos(refLat * Math.PI / 180);
+    function enforceMaxNodeDistance(points, maxDist, refPoint) {
+        if (!points || !Array.isArray(points) || points.length === 0) return points || [];
+        if (!refPoint || typeof refPoint.lat !== 'number') return points;
 
-        for (let i = 0; i < points.length - 1; i++) {
-            const p1 = points[i];
-            const p2 = points[i+1];
+        const result = [];
+        const metersPerLat = 111320;
+        const metersPerLng = 111320 * Math.cos(refPoint.lat * Math.PI / 180);
+
+        let prevPoint = refPoint;
+
+        for (let i = 0; i < points.length; i++) {
+            const p1 = prevPoint;
+            const p2 = points[i];
+
+            // 데이터 유실 방어
+            if (!p1 || !p2 || typeof p1.lat !== 'number' || typeof p2.lat !== 'number') {
+                if (p2) result.push(p2);
+                continue;
+            }
 
             const dx = (p2.lng - p1.lng) * metersPerLng;
             const dy = (p2.lat - p1.lat) * metersPerLat;
@@ -301,11 +345,12 @@
                 }
             }
             result.push(p2);
+            prevPoint = p2;
         }
         return result;
     }
 
-    function parseAndRender() {
+    async function parseAndRender() {
         const text = document.getElementById('jsonInput').value.trim();
         if (!text) return;
 
@@ -394,7 +439,7 @@
 
         } catch (e) {
             console.error(e);
-            alert("JSON Parsing Error:\n" + e.message);
+            await customAlert("JSON Parsing Error:\n" + e.message);
         }
     }
 
@@ -467,19 +512,21 @@
         renderSidebar();
     }
 
-    function deleteNode(laneId, nodeIdx) {
+    async function deleteNode(laneId, nodeIdx) {
         const lane = state.uiLanes.find(l => l.id === laneId);
         if (!lane) return;
 
         if (lane.points.length <= 1) {
-            alert("At least 1 node is required.");
+            await customAlert("At least 1 node is required.");
             return;
         }
 
-        lane.points.splice(nodeIdx, 1);
-        updateJson();
-        refreshVisuals();
-        renderSidebar();
+        if(await customConfirm("Delete this node?")) {
+            lane.points.splice(nodeIdx, 1);
+            updateJson();
+            refreshVisuals();
+            renderSidebar();
+        }
     }
 
     function renderSidebar() {
@@ -644,7 +691,7 @@
                     <div class="checkbox-grid">
                         ${MANEUVERS.map((m, idx) => `
                             <label class="checkbox-item">
-                                <input type="checkbox" ${lane.maneuvers[idx] ? 'checked' : ''} onchange="updateManeuver(${lane.id}, ${idx}, this.checked)">
+                                <input type="checkbox" ${lane.maneuvers?.[idx] ? 'checked' : ''} onchange="updateManeuver(${lane.id}, ${idx}, this.checked)">
                                 ${m.replace('maneuver','').replace('Allowed','')}
                             </label>
                         `).join('')}
@@ -715,10 +762,10 @@
         renderSidebar();
     }
 
-    function updateLaneId(oldId, newIdStr) {
+    async function updateLaneId(oldId, newIdStr) {
         const newId = parseInt(newIdStr);
         if (state.uiLanes.find(l => l.id === newId)) {
-            alert("ID duplicate");
+            await customAlert("ID duplicate");
             renderSidebar();
             return;
         }
@@ -761,121 +808,193 @@
         if(lane && lane.connections[idx]) { lane.connections[idx][key] = val; updateJson(); refreshVisuals(); }
     }
 
-    function deleteLane(id, e) {
+    async function deleteLane(id, e) {
         e.stopPropagation();
-        if(confirm("Delete this lane?")) {
+        if(await customConfirm("Delete this lane?")) {
             state.uiLanes = state.uiLanes.filter(l => l.id !== id);
             if(state.editingId === id) state.editingId = null;
             updateJson(); refreshVisuals(); renderSidebar();
         }
     }
 
-    function normalizeAndSave() {
-        if (!state.originalJson || state.uiLanes.length === 0) return;
-
-        state.uiLanes.forEach(lane => {
-            const ptCount = lane.points.length;
-            if (ptCount > 1) {
-                const distFirst = Math.hypot(lane.points[0].lat - state.refPoint.lat, lane.points[0].lng - state.refPoint.lng);
-                const distLast = Math.hypot(lane.points[ptCount - 1].lat - state.refPoint.lat, lane.points[ptCount - 1].lng - state.refPoint.lng);
-
-                if (distLast < distFirst) {
-                    lane.points.reverse();
-                }
+    async function normalizeAndSave() {
+        try {
+            if (!state.originalJson || !state.uiLanes || state.uiLanes.length === 0) {
+                await customAlert("JSON 데이터가 없거나 렌더링된 차로가 없습니다.\n우측 하단의 Render 버튼을 먼저 눌러주세요.");
+                return;
             }
 
-            lane.points = douglasPeuckerMeters(lane.points, 0.5, state.refPoint.lat);
-            lane.points = enforceMaxNodeDistance(lane.points, 1310, state.refPoint.lat);
-        });
+            const changeLog = {
+                timestamp: new Date().toISOString(),
+                intersectionName: state.intersectionInfo.name || "Unknown",
+                summary: { totalLanes: state.uiLanes.length, lanesModified: 0 },
+                details: [] // 여기에 쌓이는 로그들은 마지막에 정렬될 예정입니다.
+            };
 
-        const clusters = [];
+            // [Step 1] 방향 정렬 및 노드 최적화
+            state.uiLanes.forEach(lane => {
+                if (!lane.points || !Array.isArray(lane.points) || lane.points.length === 0) return;
 
-        state.uiLanes.forEach(lane => {
-            if (lane.direction === '00' || lane.points.length < 2) return;
+                const laneLog = { laneId: lane.id, changes: [] };
+                const originalPointsCount = lane.points.length;
+                const ptCount = lane.points.length;
 
-            const pStart = lane.points[0];
-            const pEnd = lane.points[lane.points.length - 1];
+                // 1. 방향 변경 체크 (바뀌었을 때만 로그)
+                if (ptCount > 1 && lane.points[0] && lane.points[ptCount - 1] && state.refPoint) {
+                    const distFirst = Math.hypot(lane.points[0].lat - state.refPoint.lat, lane.points[0].lng - state.refPoint.lng);
+                    const distLast = Math.hypot(lane.points[ptCount - 1].lat - state.refPoint.lat, lane.points[ptCount - 1].lng - state.refPoint.lng);
 
-            const dy = pEnd.lat - state.refPoint.lat;
-            const dx = (pEnd.lng - state.refPoint.lng) * Math.cos(state.refPoint.lat * Math.PI / 180);
-
-            let heading = Math.atan2(dx, dy) * 180 / Math.PI;
-            heading = (heading + 360) % 360;
-
-            let placed = false;
-
-            for (let c of clusters) {
-                let isClose = false;
-
-                for (let existingLane of c.lanes) {
-                    const existingEnd = existingLane.points[existingLane.points.length - 1];
-                    const distToExisting = pointLineDistanceMeters(pEnd, pEnd, existingEnd, state.refPoint.lat);
-
-                    const actualDist = Math.hypot(
-                        (pEnd.lng - existingEnd.lng) * 111320 * Math.cos(state.refPoint.lat * Math.PI / 180),
-                        (pEnd.lat - existingEnd.lat) * 111320
-                    );
-
-                    if (actualDist < 30) {
-                        isClose = true;
-                        break;
+                    if (distLast < distFirst) {
+                        lane.points.reverse();
+                        laneLog.changes.push({ type: "DIRECTION_REVERSED", detail: "Lane points reversed to flow outward." });
                     }
                 }
 
-                let diff = Math.abs(c.centerAngle - heading);
-                if (diff > 180) diff = 360 - diff;
-
-                if (isClose || diff <= 30) {
-                    c.lanes.push(lane);
-
-                    let sumDx = 0, sumDy = 0;
-                    c.lanes.forEach(l => {
-                        const lEnd = l.points[l.points.length - 1];
-                        sumDy += lEnd.lat - state.refPoint.lat;
-                        sumDx += (lEnd.lng - state.refPoint.lng) * Math.cos(state.refPoint.lat * Math.PI / 180);
-                    });
-
-                    let newCenter = Math.atan2(sumDx, sumDy) * 180 / Math.PI;
-                    c.centerAngle = (newCenter + 360) % 360;
-
-                    placed = true;
-                    break;
+                // 2. 노드 최적화 및 보간
+                if (lane.points.length > 2) {
+                    lane.points = douglasPeuckerMeters(lane.points, 0.5, state.refPoint.lat) || lane.points;
                 }
-            }
+                lane.points = enforceMaxNodeDistance(lane.points, 327.6, state.refPoint) || lane.points;
 
-            if (!placed) {
-                clusters.push({ centerAngle: heading, lanes: [lane] });
-            }
-        });
+                // 노드 개수가 실제로 달라졌을 때만 로그
+                if (lane.points.length !== originalPointsCount) {
+                    laneLog.changes.push({
+                        type: "NODE_INTERPOLATION",
+                        detail: `Node count changed from ${originalPointsCount} to ${lane.points.length} (XY6 Limit Enforced).`
+                    });
+                }
 
-        clusters.sort((a, b) => a.centerAngle - b.centerAngle);
-
-        let currentApproachId = 1;
-        clusters.forEach(c => {
-            c.lanes.forEach(lane => {
-                lane.approachID = currentApproachId;
+                // 변경사항이 하나라도 있으면 임시 저장
+                if (laneLog.changes.length > 0) {
+                    changeLog.details.push(laneLog);
+                }
             });
-            currentApproachId++;
-        });
 
-        state.uiLanes.forEach(lane => {
-            if (lane.direction === '40') {
-                delete lane.maneuvers;
-            } else if (lane.connections && lane.connections.length > 0) {
-                let combinedVal = 0;
-                lane.connections.forEach(conn => {
-                    if (conn.maneuver) {
-                        combinedVal |= parseInt(conn.maneuver, 16);
+            // [Step 2] 8방향 기반 Approach ID 순차 할당
+            const sectorMap = new Map();
+            state.uiLanes.forEach(lane => {
+                if (lane.direction === '00' || !lane.points || lane.points.length < 2) return;
+
+                const pEnd = lane.points[lane.points.length - 1];
+                if (!pEnd || typeof pEnd.lat !== 'number') return;
+
+                const dy = pEnd.lat - state.refPoint.lat;
+                const dx = (pEnd.lng - state.refPoint.lng) * Math.cos(state.refPoint.lat * Math.PI / 180);
+
+                let heading = Math.atan2(dx, dy) * 180 / Math.PI;
+                heading = (heading + 360) % 360;
+
+                let sectorIndex = Math.floor(((heading + 22.5) % 360) / 45);
+
+                if (!sectorMap.has(sectorIndex)) sectorMap.set(sectorIndex, []);
+                sectorMap.get(sectorIndex).push(lane);
+            });
+
+            const activeSectors = Array.from(sectorMap.keys()).sort((a, b) => a - b);
+            activeSectors.forEach((sectorIndex, idx) => {
+                const newApproachId = idx + 1;
+                sectorMap.get(sectorIndex).forEach(lane => {
+                    const sectorNames = ["North", "North-East", "East", "South-East", "South", "South-West", "West", "North-West"];
+
+                    // 기존 값과 다를 경우에만 덮어쓰고 로그 기록
+                    if (lane.approachID !== newApproachId) {
+                        let existingLaneLog = changeLog.details.find(d => d.laneId === lane.id);
+                        const logMsg = {
+                            type: "APPROACH_ID_UPDATED",
+                            detail: `Approach ID changed from ${lane.approachID} to ${newApproachId} (Sector: ${sectorNames[sectorIndex] || 'Unknown'}).`
+                        };
+                        if (existingLaneLog) existingLaneLog.changes.push(logMsg);
+                        else changeLog.details.push({ laneId: lane.id, changes: [logMsg] });
+
+                        lane.approachID = newApproachId;
                     }
                 });
-                lane.maneuvers = hexToBitArray(combinedVal.toString(16).padStart(4, '0'), 12);
-            }
-        });
+            });
 
-        updateJson();
-        refreshVisuals();
-        renderSidebar();
-        alert("Normalization Complete.\n- Topology corrected.\n- Nodes optimized.\n- Approach IDs assigned via Distance/Heading clustering.\n- Maneuvers adjusted based on Direction.\n- JSON Saved.");
+            // [Step 3] Maneuver 및 후처리
+            state.uiLanes.forEach(lane => {
+                if (lane.direction === '40') {
+                    const emptyManeuvers = new Array(12).fill(false);
+                    // 이미 빈 배열이면 무시, 쓰레기값이 들어있을 때만 비우고 로그 기록
+                    if (JSON.stringify(lane.maneuvers) !== JSON.stringify(emptyManeuvers)) {
+                        lane.maneuvers = emptyManeuvers;
+
+                        let existingLaneLog = changeLog.details.find(d => d.laneId === lane.id);
+                        const logMsg = { type: "MANEUVER_CLEARED", detail: "Maneuvers cleared for Egress lane." };
+                        if (existingLaneLog) existingLaneLog.changes.push(logMsg);
+                        else changeLog.details.push({ laneId: lane.id, changes: [logMsg] });
+                    }
+
+                } else if (lane.connections && lane.connections.length > 0) {
+                    let combinedVal = 0;
+                    lane.connections.forEach(conn => {
+                        if (conn.maneuver) {
+                            combinedVal |= parseInt(String(conn.maneuver), 16) || 0;
+                        }
+                    });
+
+                    let hexStr = combinedVal.toString(16).padStart(4, '0');
+                    let newManeuvers;
+
+                    if (typeof hexToBitArray === 'function') {
+                        newManeuvers = hexToBitArray(hexStr, 12);
+                    } else {
+                        newManeuvers = parseInt(hexStr, 16).toString(2).padStart(12, '0').split('').map(b => b === '1');
+                    }
+
+                    // 계산된 값과 기존 값이 다를 경우에만 덮어쓰고 로그 기록
+                    if (JSON.stringify(lane.maneuvers) !== JSON.stringify(newManeuvers)) {
+                        lane.maneuvers = newManeuvers;
+
+                        let existingLaneLog = changeLog.details.find(d => d.laneId === lane.id);
+                        const logMsg = {
+                            type: "MANEUVER_UPDATED",
+                            detail: `Maneuvers synchronized with connections (Combined Hex: ${hexStr}).`
+                        };
+
+                        if (existingLaneLog) existingLaneLog.changes.push(logMsg);
+                        else changeLog.details.push({ laneId: lane.id, changes: [logMsg] });
+                    }
+                }
+            });
+
+            // [Step 4] 로그 데이터 정렬 (laneId 오름차순) 및 마무리
+            changeLog.details.sort((a, b) => a.laneId - b.laneId);
+            changeLog.summary.lanesModified = changeLog.details.length;
+
+            updateJson();
+            refreshVisuals();
+            renderSidebar();
+
+            // [Step 5] 결과 안내 팝업
+            if (changeLog.details.length > 0) {
+                const wantsDownload = await customConfirm(`Normalize 완료.\n${changeLog.details.length}개의 차로에서 수정 사항이 발견되었습니다.\n\n수정 내역(JSON)을 다운로드하시겠습니까?`);
+                if (wantsDownload) {
+                    if (typeof downloadNormalizationLog === 'function') {
+                        downloadNormalizationLog(changeLog);
+                    } else {
+                        await customAlert("다운로드 함수가 누락되었습니다.");
+                    }
+                }
+            } else {
+                // 수정된 사항이 단 하나도 없다면
+                await customAlert("Normalization 완료.\n모든 데이터가 정상이며 수정할 사항이 없습니다.");
+            }
+
+        } catch (error) {
+            console.error("Normalize Error:", error);
+            await customAlert(`Normalize 중 오류가 발생했습니다:\n\n${error.message}\n\n(콘솔에서 상세 스택을 확인하세요)`);
+        }
+    }
+
+    function downloadNormalizationLog(logData) {
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(logData, null, 2));
+        const downloadAnchorNode = document.createElement('a');
+        downloadAnchorNode.setAttribute("href", dataStr);
+        downloadAnchorNode.setAttribute("download", `normalization_log_${state.intersectionInfo.id || 'export'}.json`);
+        document.body.appendChild(downloadAnchorNode);
+        downloadAnchorNode.click();
+        downloadAnchorNode.remove();
     }
 
     function updateJson() {
@@ -1279,6 +1398,37 @@
     });
 
     setTimeout(() => { map.invalidateSize(); parseAndRender(); }, 500);
+    
+    function customAlert(message) {
+        return new Promise(resolve => {
+            const overlay = document.getElementById('customModal');
+            document.getElementById('customModalText').innerText = message;
+            document.getElementById('customModalBtnCancel').style.display = 'none';
+            const btnOk = document.getElementById('customModalBtnOk');
+
+            overlay.style.display = 'flex';
+
+            btnOk.onclick = () => {
+                overlay.style.display = 'none';
+                resolve();
+            };
+        });
+    }
+
+    function customConfirm(message) {
+        return new Promise(resolve => {
+            const overlay = document.getElementById('customModal');
+            document.getElementById('customModalText').innerText = message;
+            const btnCancel = document.getElementById('customModalBtnCancel');
+            const btnOk = document.getElementById('customModalBtnOk');
+
+            btnCancel.style.display = 'block';
+            overlay.style.display = 'flex';
+
+            btnCancel.onclick = () => { overlay.style.display = 'none'; resolve(false); };
+            btnOk.onclick = () => { overlay.style.display = 'none'; resolve(true); };
+        });
+    }
 
 </script>
 </body>
