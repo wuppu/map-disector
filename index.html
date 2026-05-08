@@ -1181,45 +1181,104 @@
                 }
             });
 
-            // [Step 2] 8방향 기반 Approach ID 순차 할당
-            const sectorMap = new Map();
+            // [Step 2] heading 클러스터링 기반 Approach ID 할당
+            // 고정 섹터 대신 실제 레인 방향으로 자동 그룹화 → 기울어진 X자 교차로에도 대응
+            const CLUSTER_GAP = 45; // 이 각도 이상 차이나면 다른 접근로로 분리
+
+            const laneItems = [];
             state.uiLanes.forEach(lane => {
                 if (lane.direction === '00' || !lane.points || lane.points.length < 2) return;
 
+                const pStart = lane.points[0];
                 const pEnd = lane.points[lane.points.length - 1];
-                if (!pEnd || typeof pEnd.lat !== 'number') return;
+                if (!pEnd || typeof pEnd.lat !== 'number' || !pStart || typeof pStart.lat !== 'number') return;
 
-                const dy = pEnd.lat - state.refPoint.lat;
-                const dx = (pEnd.lng - state.refPoint.lng) * Math.cos(state.refPoint.lat * Math.PI / 180);
+                // 흐름 벡터로 heading 계산
+                const flowDy = pEnd.lat - pStart.lat;
+                const flowDx = (pEnd.lng - pStart.lng) * Math.cos((pStart.lat + pEnd.lat) / 2 * Math.PI / 180);
 
-                let heading = Math.atan2(dx, dy) * 180 / Math.PI;
+                let heading;
+                if (Math.hypot(flowDx, flowDy) > 0.0001) {
+                    heading = Math.atan2(flowDx, flowDy) * 180 / Math.PI;
+                } else {
+                    const dy = pEnd.lat - state.refPoint.lat;
+                    const dx = (pEnd.lng - state.refPoint.lng) * Math.cos(state.refPoint.lat * Math.PI / 180);
+                    heading = Math.atan2(dx, dy) * 180 / Math.PI;
+                }
+
                 heading = (heading + 360) % 360;
-
-                let sectorIndex = Math.floor(((heading + 22.5) % 360) / 45);
-
-                if (!sectorMap.has(sectorIndex)) sectorMap.set(sectorIndex, []);
-                sectorMap.get(sectorIndex).push(lane);
+                laneItems.push({
+                    lane,
+                    heading,
+                    direction: lane.direction === '80' ? '[진입]' : '[진출]'
+                });
             });
 
-            const activeSectors = Array.from(sectorMap.keys()).sort((a, b) => a - b);
-            activeSectors.forEach((sectorIndex, idx) => {
-                const newApproachId = idx + 1;
-                sectorMap.get(sectorIndex).forEach(lane => {
-                    const sectorNames = ["North", "North-East", "East", "South-East", "South", "South-West", "West", "North-West"];
+            // heading 오름차순 정렬
+            laneItems.sort((a, b) => a.heading - b.heading);
 
-                    // 기존 값과 다를 경우에만 덮어쓰고 로그 기록
+            // 순환 클러스터링: 인접 heading 간격이 CLUSTER_GAP 이상이면 다른 그룹
+            const clusters = [];
+            if (laneItems.length > 0) {
+                let currentCluster = [laneItems[0]];
+                for (let i = 1; i < laneItems.length; i++) {
+                    if (laneItems[i].heading - laneItems[i - 1].heading >= CLUSTER_GAP) {
+                        clusters.push(currentCluster);
+                        currentCluster = [];
+                    }
+                    currentCluster.push(laneItems[i]);
+                }
+                // 마지막 클러스터와 첫 클러스터 순환 병합 여부 확인
+                const circularGap = (laneItems[0].heading + 360) - laneItems[laneItems.length - 1].heading;
+                if (clusters.length > 0 && circularGap < CLUSTER_GAP) {
+                    clusters[0] = [...currentCluster, ...clusters[0]];
+                } else {
+                    clusters.push(currentCluster);
+                }
+            }
+
+            // 클러스터 평균 heading 기준으로 정렬 후 ApproachID 순차 할당
+            clusters.sort((a, b) => {
+                const avgA = a.reduce((s, i) => s + i.heading, 0) / a.length;
+                const avgB = b.reduce((s, i) => s + i.heading, 0) / b.length;
+                return avgA - avgB;
+            });
+
+            const approachSuggestions = [];
+            clusters.forEach((cluster, approachIdx) => {
+                const newApproachId = approachIdx + 1;
+                const avgHeading = (cluster.reduce((s, i) => s + i.heading, 0) / cluster.length).toFixed(1);
+
+                cluster.forEach(item => {
+                    const lane = item.lane;
                     if (lane.approachID !== newApproachId) {
-                        let existingLaneLog = changeLog.details.find(d => d.laneId === lane.id);
-                        const logMsg = {
-                            type: "APPROACH_ID_UPDATED",
-                            detail: `Approach ID changed from ${lane.approachID} to ${newApproachId} (Sector: ${sectorNames[sectorIndex] || 'Unknown'}).`
-                        };
-                        if (existingLaneLog) existingLaneLog.changes.push(logMsg);
-                        else changeLog.details.push({ laneId: lane.id, changes: [logMsg] });
-
-                        lane.approachID = newApproachId;
+                        approachSuggestions.push({
+                            laneId: lane.id,
+                            laneName: lane.name || `Lane ${lane.id}`,
+                            oldValue: lane.approachID,
+                            newValue: newApproachId,
+                            direction: item.direction,
+                            sector: `Cluster ${newApproachId} (avg ${avgHeading}°)`,
+                            heading: item.heading.toFixed(1)
+                        });
                     }
                 });
+            });
+
+            // 확인 없이 바로 적용
+            approachSuggestions.forEach(s => {
+                const lane = state.uiLanes.find(l => l.id === s.laneId);
+                if (lane) {
+                    let existingLaneLog = changeLog.details.find(d => d.laneId === lane.id);
+                    const logMsg = {
+                        type: "APPROACH_ID_UPDATED",
+                        detail: `Approach ID changed from ${s.oldValue} to ${s.newValue} (${s.direction} ${s.sector}, heading: ${s.heading}°).`
+                    };
+                    if (existingLaneLog) existingLaneLog.changes.push(logMsg);
+                    else changeLog.details.push({ laneId: lane.id, changes: [logMsg] });
+
+                    lane.approachID = s.newValue;
+                }
             });
 
             // [Step 3] Maneuver 및 후처리
@@ -1244,14 +1303,11 @@
                         }
                     });
 
+                    // connection maneuver는 16비트(0x8000=straight, 0x4000=left, 0x2000=right)
+                    // lane maneuver는 12비트(bit0=straight, bit1=left, bit2=right)
+                    // 상위 12비트를 사용해야 정확히 매핑됨
                     let hexStr = combinedVal.toString(16).padStart(4, '0');
-                    let newManeuvers;
-
-                    if (typeof hexToBitArray === 'function') {
-                        newManeuvers = hexToBitArray(hexStr, 12);
-                    } else {
-                        newManeuvers = parseInt(hexStr, 16).toString(2).padStart(12, '0').split('').map(b => b === '1');
-                    }
+                    let newManeuvers = hexToBitArray(hexStr, 16).slice(0, 12);
 
                     // 계산된 값과 기존 값이 다를 경우에만 덮어쓰고 로그 기록
                     if (JSON.stringify(lane.maneuvers) !== JSON.stringify(newManeuvers)) {
@@ -1318,7 +1374,9 @@
             if (!containerArr || containerArr.length === 0) return;
             let containerObj = containerArr[0];
 
-            containerObj.name = state.intersectionInfo.name;
+            // DescriptiveName 최소 1자 제약: 빈 문자열이면 필드 제거
+            if (state.intersectionInfo.name) containerObj.name = state.intersectionInfo.name;
+            else delete containerObj.name;
             if (!containerObj.id) containerObj.id = {};
             if (state.intersectionInfo.region) containerObj.id.region = state.intersectionInfo.region;
             containerObj.id.id = state.intersectionInfo.id;
@@ -1419,8 +1477,7 @@
 
     function bitArrayToHex(bits) {
         const str = bits.map(b => b ? '1' : '0').join('');
-        const targetLen = Math.ceil(bits.length / 4) * 4;
-        const padded = str.padEnd(targetLen, '0');
+        const padded = str.padEnd(16, '0');  // 16비트로 확장 → 항상 4자리 hex
         let hex = "";
         for (let i = 0; i < padded.length; i += 4) {
             hex += parseInt(padded.substr(i, 4), 2).toString(16).toUpperCase();
