@@ -1191,7 +1191,7 @@
 
     async function normalizeAndSave() {
         try {
-            if (!state.originalJson || !state.uiLanes || state.uiLanes.length === 0) {
+            if (!state.originalJsonList.length || !state.uiLanes || state.uiLanes.length === 0) {
                 await customAlert("JSON 데이터가 없거나 렌더링된 차로가 없습니다.\n우측 하단의 Render 버튼을 먼저 눌러주세요.");
                 return;
             }
