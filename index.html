@@ -294,7 +294,7 @@
         }
         .sidebar {
             background-image:
-                    radial-gradient(rgba(255,255,255,0.028) 1px, transparent 1px);
+                radial-gradient(rgba(255,255,255,0.028) 1px, transparent 1px);
             background-size: 22px 22px;
         }
 
@@ -457,6 +457,7 @@
     L.control.zoom({ position: 'bottomright' }).addTo(map);
 
     const groups = {
+        overview: L.layerGroup().addTo(map), // 다른 교차로 미리보기 (편집 불가)
         casing: L.layerGroup().addTo(map),
         lanes: L.layerGroup().addTo(map),
         connections: L.layerGroup().addTo(map),
@@ -513,8 +514,11 @@
     }
 
     let state = {
-        originalJson: null,
+        originalJsonList: [],   // 입력된 JSON 객체들 (여러 개 가능)
         layerType: "intersectionData",
+        containerArr: [],       // [{ ref, layerType, sourceJsonIndex }, ...]
+        selectedContainerIndex: 0,
+        showAll: false,
         intersectionInfo: { name: "", region: 0, id: 0 },
         refPoint: { lat: 36.5, lng: 127.5 },
         uiLanes: [],
@@ -625,101 +629,138 @@
         return result;
     }
 
+    function loadContainerByIndex(index) {
+        const entry = state.containerArr[index];
+        if (!entry) return;
+        state.selectedContainerIndex = index;
+        state.layerType = entry.layerType;
+
+        const containerObj = entry.ref;
+        if (!containerObj.refPoint) return;
+
+        state.intersectionInfo = {
+            name: containerObj.name || "",
+            region: containerObj.id?.region || 0,
+            id: containerObj.id?.id || 0
+        };
+
+        state.refPoint = {
+            lat: containerObj.refPoint.lat / 10000000,
+            lng: containerObj.refPoint.long / 10000000
+        };
+        map.setView([state.refPoint.lat, state.refPoint.lng], 18);
+
+        state.uiLanes = [];
+
+        let sourceLaneSet = entry.layerType === "generalMapData"
+            ? (containerObj.roadLaneSet || [])
+            : (containerObj.laneSet || []);
+
+        if (sourceLaneSet.length > 0) {
+            sourceLaneSet.forEach(l => {
+                if (!l.nodeList || !Array.isArray(l.nodeList.nodes)) {
+                    console.warn(`Lane ${l.laneID}: nodeList 누락, 건너뜀`);
+                    return;
+                }
+                _parseLane(l);
+            });
+        }
+
+        scheduleRefresh();
+        drawOverview();
+    }
+
+    // 텍스트에서 여러 JSON 객체를 파싱
+    function parseMultipleJsons(text) {
+        const results = [];
+        let depth = 0, start = -1;
+        for (let i = 0; i < text.length; i++) {
+            if (text[i] === '{') {
+                if (depth === 0) start = i;
+                depth++;
+            } else if (text[i] === '}') {
+                depth--;
+                if (depth === 0 && start !== -1) {
+                    results.push(JSON.parse(text.substring(start, i + 1)));
+                    start = -1;
+                }
+            }
+        }
+        return results;
+    }
+
     async function parseAndRender() {
         const text = document.getElementById('jsonInput').value.trim();
         if (!text) { renderSidebar(); return; }
 
         try {
-            state.originalJson = JSON.parse(text);
-            let mapData = state.originalJson;
-            if (mapData.value) mapData = mapData.value;
+            const jsonList = parseMultipleJsons(text);
+            if (!jsonList.length) throw new Error("유효한 JSON을 찾을 수 없습니다");
 
-            state.layerType = mapData.layerType || "intersectionData";
+            state.originalJsonList = jsonList;
+            state.containerArr = [];
 
-            let containerArr = [];
-            if (state.layerType === "generalMapData") {
-                containerArr = mapData.roadSegments;
-            } else {
-                containerArr = mapData.intersections;
-            }
+            // 각 JSON에서 containerArr 추출하여 합치기
+            jsonList.forEach((json, sourceJsonIndex) => {
+                const mapData = json.value ? json.value : json;
+                const layerType = mapData.layerType || "intersectionData";
+                const arr = layerType === "generalMapData"
+                    ? (mapData.roadSegments || [])
+                    : (mapData.intersections || []);
 
-            if (!containerArr || containerArr.length === 0) throw new Error("No map data found");
-
-            const containerObj = containerArr[0];
-            if (!containerObj.refPoint) throw new Error("No refPoint found");
-
-            state.intersectionInfo = {
-                name: containerObj.name || "",
-                region: containerObj.id?.region || 0,
-                id: containerObj.id?.id || 0
-            };
-
-            state.refPoint = {
-                lat: containerObj.refPoint.lat / 10000000,
-                lng: containerObj.refPoint.long / 10000000
-            };
-            map.setView([state.refPoint.lat, state.refPoint.lng], 18);
-
-            state.uiLanes = [];
-
-            let sourceLaneSet = [];
-            if (state.layerType === "generalMapData") {
-                sourceLaneSet = containerObj.roadLaneSet || [];
-            } else {
-                sourceLaneSet = containerObj.laneSet || [];
-            }
-
-            if (sourceLaneSet.length > 0) {
-                sourceLaneSet.forEach(l => {
-                    if (!l.nodeList || !Array.isArray(l.nodeList.nodes)) {
-                        console.warn(`Lane ${l.laneID}: nodeList 누락, 건너뜀`);
-                        return;
-                    }
-                    const points = calculatePoints(l.nodeList.nodes, state.refPoint);
-
-                    const dirStr = l.laneAttributes.directionalUse || "00";
-                    let approachID = 0;
-                    if (dirStr === "80") approachID = l.ingressApproach || 0;
-                    else if (dirStr === "40") approachID = l.egressApproach || 0;
-
-                    let lType = 'vehicle';
-                    let lTypeAttr = '';
-                    if(l.laneAttributes.laneType) {
-                        lType = Object.keys(l.laneAttributes.laneType)[0];
-                        lTypeAttr = JSON.stringify(l.laneAttributes.laneType[lType]);
-                    }
-
-                    const manBits = hexToBitArray(l.maneuvers, 12);
-                    const connections = (l.connectsTo || []).map(c => ({
-                        lane: c.connectingLane.lane,
-                        signal: c.signalGroup || 0,
-                        maneuver: c.connectingLane.maneuver
-                    }));
-
-                    state.uiLanes.push({
-                        id: l.laneID,
-                        name: l.name || "",
-                        points: points,
-                        direction: dirStr,
-                        approachID: approachID,
-                        type: lType,
-                        typeAttr: lTypeAttr,
-                        sharedWith: l.laneAttributes.sharedWith || "0000",
-                        maneuvers: manBits,
-                        connections: connections,
-                        _casing: null, _core: null, _markers: []
-                    });
+                arr.forEach(ref => {
+                    state.containerArr.push({ ref, layerType, sourceJsonIndex });
                 });
-            }
-            sortLanes();
-            updateJson();
-            refreshVisuals();
-            renderSidebar();
+            });
+
+            if (!state.containerArr.length) throw new Error("No map data found");
+
+            // 첫 번째 layerType을 기본값으로
+            state.layerType = state.containerArr[0].layerType;
+            state.selectedContainerIndex = 0;
+
+            loadContainerByIndex(0);
 
         } catch (e) {
             console.error(e);
             await customAlert("JSON Parsing Error:\n" + e.message);
         }
+    }
+
+    function _parseLane(l) {
+        const points = calculatePoints(l.nodeList.nodes, state.refPoint);
+        const dirStr = l.laneAttributes.directionalUse || "00";
+        let approachID = 0;
+        if (dirStr === "80") approachID = l.ingressApproach || 0;
+        else if (dirStr === "40") approachID = l.egressApproach || 0;
+
+        let lType = 'vehicle';
+        let lTypeAttr = '';
+        if (l.laneAttributes.laneType) {
+            lType = Object.keys(l.laneAttributes.laneType)[0];
+            lTypeAttr = JSON.stringify(l.laneAttributes.laneType[lType]);
+        }
+
+        const manBits = hexToBitArray(l.maneuvers, 12);
+        const connections = (l.connectsTo || []).map(c => ({
+            lane: c.connectingLane.lane,
+            signal: c.signalGroup || 0,
+            maneuver: c.connectingLane.maneuver
+        }));
+
+        state.uiLanes.push({
+            id: l.laneID,
+            name: l.name || "",
+            points,
+            direction: dirStr,
+            approachID,
+            type: lType,
+            typeAttr: lTypeAttr,
+            sharedWith: l.laneAttributes.sharedWith || "0000",
+            maneuvers: manBits,
+            connections,
+            _casing: null, _core: null, _markers: []
+        });
     }
 
     function calculatePoints(nodes, ref) {
@@ -811,10 +852,30 @@
 
         document.getElementById('laneCount').innerText = `${state.uiLanes.length} Lanes`;
 
+        const mapSelectorHtml = state.containerArr.length > 1 ? `
+            <div style="padding: 8px 12px 0;">
+                <span class="form-label">Map 선택</span>
+                <div style="display:flex; gap:6px; margin-top:4px; align-items:center;">
+                    <select class="form-input" style="flex:1;" onchange="loadContainerByIndex(parseInt(this.value))">
+                        ${state.containerArr.map((entry, i) => {
+                            const c = entry.ref;
+                            const label = c.name || (c.id ? `ID ${c.id.id}` : `Map ${i + 1}`);
+                            return `<option value="${i}" ${i === state.selectedContainerIndex ? 'selected' : ''}>${i + 1}. ${label}</option>`;
+                        }).join('')}
+                    </select>
+                    <button id="btnShowAll" class="icon-btn" onclick="toggleShowAll()"
+                        title="${state.showAll ? '현재 교차로만 표시' : '모든 교차로 표시'}"
+                        style="${state.showAll ? 'background:rgba(79,142,247,0.3);color:#4f8ef7;' : ''}">
+                        <i class="fa-solid fa-layer-group"></i>
+                    </button>
+                </div>
+            </div>` : '';
+
         intersectionContainer.innerHTML = `
             <div class="card-header" style="background: transparent; cursor: default; padding-bottom: 5px;">
                 <span class="card-title">RefPoint Data</span>
             </div>
+            ${mapSelectorHtml}
             <div style="padding: 0 12px 12px 12px;">
                 <div class="form-row">
                     <div class="form-col" style="flex: 2;">
@@ -1365,101 +1426,101 @@
     }
 
     function updateJson() {
-        if (!state.originalJson) return;
+        if (!state.originalJsonList.length) return;
         try {
-            let root = state.originalJson;
-            let mapData = root.value ? root.value : root;
+        const entry = state.containerArr[state.selectedContainerIndex];
+        if (!entry) return;
+        // containerObj는 originalJsonList 내의 객체를 직접 참조하므로 in-place 수정됨
+        let containerObj = entry.ref;
 
-            let containerArr = state.layerType === "generalMapData" ? mapData.roadSegments : mapData.intersections;
-            if (!containerArr || containerArr.length === 0) return;
-            let containerObj = containerArr[0];
+        // DescriptiveName 최소 1자 제약: 빈 문자열이면 필드 제거
+        if (state.intersectionInfo.name) containerObj.name = state.intersectionInfo.name;
+        else delete containerObj.name;
+        if (!containerObj.id) containerObj.id = {};
+        if (state.intersectionInfo.region) containerObj.id.region = state.intersectionInfo.region;
+        containerObj.id.id = state.intersectionInfo.id;
 
-            // DescriptiveName 최소 1자 제약: 빈 문자열이면 필드 제거
-            if (state.intersectionInfo.name) containerObj.name = state.intersectionInfo.name;
-            else delete containerObj.name;
-            if (!containerObj.id) containerObj.id = {};
-            if (state.intersectionInfo.region) containerObj.id.region = state.intersectionInfo.region;
-            containerObj.id.id = state.intersectionInfo.id;
+        containerObj.refPoint.lat = Math.round(state.refPoint.lat * 10000000);
+        containerObj.refPoint.long = Math.round(state.refPoint.lng * 10000000);
 
-            containerObj.refPoint.lat = Math.round(state.refPoint.lat * 10000000);
-            containerObj.refPoint.long = Math.round(state.refPoint.lng * 10000000);
+        let targetLaneSetKey = state.layerType === "generalMapData" ? "roadLaneSet" : "laneSet";
+        if (!containerObj[targetLaneSetKey]) containerObj[targetLaneSetKey] = [];
 
-            let targetLaneSetKey = state.layerType === "generalMapData" ? "roadLaneSet" : "laneSet";
-            if (!containerObj[targetLaneSetKey]) containerObj[targetLaneSetKey] = [];
+        let targetLaneSet = containerObj[targetLaneSetKey];
+        targetLaneSet = targetLaneSet.filter(jl => state.uiLanes.some(ul => ul.id === jl.laneID));
 
-            let targetLaneSet = containerObj[targetLaneSetKey];
-            targetLaneSet = targetLaneSet.filter(jl => state.uiLanes.some(ul => ul.id === jl.laneID));
+        sortLanes();
 
-            sortLanes();
+        state.uiLanes.forEach(ui => {
+            let jsonIndex = targetLaneSet.findIndex(jl => jl.laneID === ui.id);
+            const orderedLane = {};
 
-            state.uiLanes.forEach(ui => {
-                let jsonIndex = targetLaneSet.findIndex(jl => jl.laneID === ui.id);
-                const orderedLane = {};
+            orderedLane.laneID = ui.id;
+            if(ui.name) orderedLane.name = ui.name;
 
-                orderedLane.laneID = ui.id;
-                if(ui.name) orderedLane.name = ui.name;
+            if (ui.direction === "80" && ui.approachID > 0) orderedLane.ingressApproach = ui.approachID;
+            else if (ui.direction === "40" && ui.approachID > 0) orderedLane.egressApproach = ui.approachID;
 
-                if (ui.direction === "80" && ui.approachID > 0) orderedLane.ingressApproach = ui.approachID;
-                else if (ui.direction === "40" && ui.approachID > 0) orderedLane.egressApproach = ui.approachID;
+            let attrVal = {};
+            try { attrVal = JSON.parse(ui.typeAttr); } catch(e) { attrVal = ui.typeAttr; }
+            const lTypeObj = {};
+            lTypeObj[ui.type] = attrVal;
 
-                let attrVal = {};
-                try { attrVal = JSON.parse(ui.typeAttr); } catch(e) { attrVal = ui.typeAttr; }
-                const lTypeObj = {};
-                lTypeObj[ui.type] = attrVal;
+            orderedLane.laneAttributes = {
+                directionalUse: ui.direction,
+                sharedWith: ui.sharedWith,
+                laneType: lTypeObj
+            };
 
-                orderedLane.laneAttributes = {
-                    directionalUse: ui.direction,
-                    sharedWith: ui.sharedWith,
-                    laneType: lTypeObj
-                };
+            if (ui.direction !== '40') {
+                orderedLane.maneuvers = bitArrayToHex(ui.maneuvers);
+            }
 
-                if (ui.direction !== '40') {
-                    orderedLane.maneuvers = bitArrayToHex(ui.maneuvers);
+            const nodeList = [];
+            let prevLat = state.refPoint.lat, prevLng = state.refPoint.lng;
+            const cosLatJson = Math.cos(state.refPoint.lat * Math.PI / 180);
+
+            ui.points.forEach((pt, idx) => {
+                const dLat = pt.lat - prevLat, dLng = pt.lng - prevLng;
+                const y_cm = Math.round(dLat * CONFIG.cmPerDegLat);
+                const x_cm = Math.round(dLng * (CONFIG.cmPerDegLat * cosLatJson));
+
+                let type = "node-XY6";
+                const max = Math.max(Math.abs(x_cm), Math.abs(y_cm));
+                if(max<=511) type="node-XY1";
+                else if(max<=1023) type="node-XY2";
+                else if(max<=2047) type="node-XY3";
+                else if(max<=4095) type="node-XY4";
+                else if(max<=8191) type="node-XY5";
+
+                const node = { delta: { [type]: { x: x_cm, y: y_cm } } };
+
+                if (ui.direction === "80" && idx === 0) {
+                    node.attributes = { localNode: ["stopLine"] };
                 }
 
-                const nodeList = [];
-                let prevLat = state.refPoint.lat, prevLng = state.refPoint.lng;
-                const cosLatJson = Math.cos(state.refPoint.lat * Math.PI / 180);
-
-                ui.points.forEach((pt, idx) => {
-                    const dLat = pt.lat - prevLat, dLng = pt.lng - prevLng;
-                    const y_cm = Math.round(dLat * CONFIG.cmPerDegLat);
-                    const x_cm = Math.round(dLng * (CONFIG.cmPerDegLat * cosLatJson));
-
-                    let type = "node-XY6";
-                    const max = Math.max(Math.abs(x_cm), Math.abs(y_cm));
-                    if(max<=511) type="node-XY1";
-                    else if(max<=1023) type="node-XY2";
-                    else if(max<=2047) type="node-XY3";
-                    else if(max<=4095) type="node-XY4";
-                    else if(max<=8191) type="node-XY5";
-
-                    const node = { delta: { [type]: { x: x_cm, y: y_cm } } };
-
-                    if (ui.direction === "80" && idx === 0) {
-                        node.attributes = { localNode: ["stopLine"] };
-                    }
-
-                    nodeList.push(node);
-                    prevLat = pt.lat; prevLng = pt.lng;
-                });
-                orderedLane.nodeList = { nodes: nodeList };
-
-                const connectsTo = ui.connections.map(c => ({
-                    connectingLane: { lane: c.lane, maneuver: c.maneuver || "0000" },
-                    signalGroup: c.signal
-                }));
-
-                if (connectsTo.length > 0) orderedLane.connectsTo = connectsTo;
-
-                if (jsonIndex >= 0) targetLaneSet[jsonIndex] = orderedLane;
-                else targetLaneSet.push(orderedLane);
+                nodeList.push(node);
+                prevLat = pt.lat; prevLng = pt.lng;
             });
+            orderedLane.nodeList = { nodes: nodeList };
 
-            targetLaneSet.sort((a,b) => a.laneID - b.laneID);
-            containerObj[targetLaneSetKey] = targetLaneSet;
+            const connectsTo = ui.connections.map(c => ({
+                connectingLane: { lane: c.lane, maneuver: c.maneuver || "0000" },
+                signalGroup: c.signal
+            }));
 
-            document.getElementById('jsonInput').value = JSON.stringify(state.originalJson, null, 2);
+            if (connectsTo.length > 0) orderedLane.connectsTo = connectsTo;
+
+            if (jsonIndex >= 0) targetLaneSet[jsonIndex] = orderedLane;
+            else targetLaneSet.push(orderedLane);
+        });
+
+        targetLaneSet.sort((a,b) => a.laneID - b.laneID);
+        containerObj[targetLaneSetKey] = targetLaneSet;
+
+        // 원본 JSON 전체를 textarea에 반영 (여러 JSON이면 줄바꿈으로 구분)
+        document.getElementById('jsonInput').value =
+            state.originalJsonList.map(j => JSON.stringify(j, null, 2)).join('\n\n');
         } catch (e) {
             console.error("updateJson 오류:", e);
         }
@@ -1528,6 +1589,56 @@
             pts.push({lat, lng});
         }
         return pts;
+    }
+
+    function drawOverview() {
+        groups.overview.clearLayers();
+        if (!state.showAll || state.containerArr.length <= 1) return;
+
+        state.containerArr.forEach((entry, idx) => {
+            if (idx === state.selectedContainerIndex) return; // 현재 선택된 건 제외
+
+            const refPoint = {
+                lat: entry.ref.refPoint.lat / 10000000,
+                lng: entry.ref.refPoint.long / 10000000
+            };
+            const laneSetKey = entry.layerType === "generalMapData" ? "roadLaneSet" : "laneSet";
+            const laneSet = entry.ref[laneSetKey] || [];
+
+            // refPoint 마커
+            L.circleMarker([refPoint.lat, refPoint.lng], {
+                radius: 6, color: '#94a3b8', fillColor: '#475569', fillOpacity: 0.8, weight: 1
+            }).addTo(groups.overview)
+              .bindTooltip(entry.ref.name || `Map ${idx + 1}`, { permanent: false });
+
+            laneSet.forEach(l => {
+                if (!l.nodeList?.nodes) return;
+                const points = calculatePoints(l.nodeList.nodes, refPoint);
+                if (!points.length) return;
+
+                const dir = l.laneAttributes?.directionalUse || "00";
+                const color = dir === "80" ? "#3b82f6" : dir === "40" ? "#ef4444" : "#94a3b8";
+
+                L.polyline(points, { color: '#1e293b', weight: 6, opacity: 0.5 }).addTo(groups.overview);
+                L.polyline(points, { color, weight: 2.5, opacity: 0.55 })
+                    .addTo(groups.overview)
+                    .on('click', () => {
+                        loadContainerByIndex(idx);
+                        scheduleRefresh();
+                    });
+            });
+        });
+    }
+
+    function toggleShowAll() {
+        state.showAll = !state.showAll;
+        drawOverview();
+        const btn = document.getElementById('btnShowAll');
+        if (btn) {
+            btn.style.background = state.showAll ? 'rgba(79,142,247,0.3)' : '';
+            btn.style.color = state.showAll ? '#4f8ef7' : '';
+            btn.title = state.showAll ? '현재 교차로만 표시' : '모든 교차로 표시';
+        }
     }
 
     function refreshVisuals() {
@@ -1780,7 +1891,7 @@
     });
 
     setTimeout(() => { map.invalidateSize(); parseAndRender(); }, 500);
-
+    
     function customAlert(message) {
         return new Promise(resolve => {
             const overlay = document.getElementById('customModal');
