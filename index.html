@@ -284,6 +284,32 @@
             border: 1px solid rgba(255,255,255,0.22);
             pointer-events: none;
         }
+        .map-name-container {
+            color: #fff; background: rgba(15, 23, 42, 0.88);
+            font-family: var(--font); font-size: 13px; font-weight: 900;
+            letter-spacing: -0.02em; white-space: nowrap;
+            padding: 5px 12px; border-radius: 8px;
+            border: 1.5px solid rgba(79, 142, 247, 0.7);
+            box-shadow: 0 3px 12px rgba(0,0,0,0.7);
+            text-shadow: 0 1px 3px rgba(0,0,0,0.9);
+            transform: translate(-50%, -130%);
+            pointer-events: none;
+        }
+        /* Tile switcher control */
+        .tile-switcher {
+            position: absolute; bottom: 90px; right: 10px; z-index: 1000;
+            display: flex; flex-direction: column; gap: 4px;
+        }
+        .tile-btn {
+            background: rgba(8, 12, 26, 0.92); color: rgba(255,255,255,0.75);
+            border: 1px solid rgba(255,255,255,0.18); border-radius: 5px;
+            font-family: var(--font); font-size: 10px; font-weight: 900;
+            letter-spacing: 0.04em; padding: 5px 9px; cursor: pointer;
+            white-space: nowrap; text-align: right;
+            transition: all 0.15s ease;
+        }
+        .tile-btn:hover { background: rgba(79,142,247,0.25); color: #fff; border-color: rgba(79,142,247,0.6); }
+        .tile-btn.active { background: rgba(79,142,247,0.35); color: #fff; border-color: #4f8ef7; }
 
         /* === Sidebar accent & texture === */
         .sidebar::before {
@@ -450,10 +476,35 @@
 </div>
 
 <div id="map"></div>
+<div class="tile-switcher">
+    <button class="tile-btn active" data-tile="hybrid" onclick="switchTile('hybrid')">🛰 Hybrid</button>
+    <button class="tile-btn" data-tile="satellite" onclick="switchTile('satellite')">📷 Satellite</button>
+    <button class="tile-btn" data-tile="road" onclick="switchTile('road')">🗺 Roadmap</button>
+    <button class="tile-btn" data-tile="esri" onclick="switchTile('esri')">🌍 Esri</button>
+</div>
 
 <script>
     const map = L.map('map', { zoomControl: false }).setView([36.5, 127.5], 18);
-    L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', { maxZoom: 22, maxNativeZoom: 19, attribution: 'Google' }).addTo(map);
+
+    const TILE_LAYERS = {
+        'hybrid':   L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', { maxZoom: 22, maxNativeZoom: 19, attribution: 'Google' }),
+        'satellite':L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', { maxZoom: 22, maxNativeZoom: 19, attribution: 'Google' }),
+        'road':     L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', { maxZoom: 22, maxNativeZoom: 19, attribution: 'Google' }),
+        'esri':     L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 22, maxNativeZoom: 19, attribution: 'Esri' }),
+    };
+    let activeTileKey = 'hybrid';
+    TILE_LAYERS.hybrid.addTo(map);
+
+    function switchTile(key) {
+        if (key === activeTileKey) return;
+        map.removeLayer(TILE_LAYERS[activeTileKey]);
+        TILE_LAYERS[key].addTo(map);
+        activeTileKey = key;
+        document.querySelectorAll('.tile-btn').forEach(b => {
+            b.classList.toggle('active', b.dataset.tile === key);
+        });
+    }
+
     L.control.zoom({ position: 'bottomright' }).addTo(map);
 
     const groups = {
@@ -1650,7 +1701,22 @@
 
         if(state.refPoint) {
             L.circleMarker([state.refPoint.lat, state.refPoint.lng], { radius: 8, color: '#fff', fillColor: '#fbbf24', fillOpacity: 1 }).addTo(groups.lanes).bindTooltip("REF");
+
+            // MAP name label
+            const mapName = state.intersectionInfo.name;
+            if (mapName) {
+                const nameIcon = L.divIcon({
+                    className: 'map-name-label',
+                    html: `<div class="map-name-container">${mapName}</div>`,
+                    iconSize: [0, 0],
+                    iconAnchor: [0, 0]
+                });
+                L.marker([state.refPoint.lat, state.refPoint.lng], { icon: nameIcon, interactive: false }).addTo(groups.labels);
+            }
         }
+
+        // SG 라벨 중복 방지: 신호그룹별로 midpoint 모아서 평균 위치에 한 번만 그림
+        const sgMidpoints = new Map(); // signal → { lats:[], lngs:[], color }
 
         state.uiLanes.forEach(lane => {
             if (lane.points.length === 0) return;
@@ -1714,14 +1780,14 @@
                     dashArray: '8, 8'
                 }).addTo(groups.connections);
 
-                const curveMidPt = bezierPts[Math.floor(bezierPts.length / 2)];
-                const sgIcon = L.divIcon({
-                    className: 'sg-label',
-                    html: `<div class="sg-label-container" style="background:${sgColor}cc;">SG:${conn.signal}</div>`,
-                    iconSize: [40, 20],
-                    iconAnchor: [20, 10]
-                });
-                L.marker(curveMidPt, { icon: sgIcon, interactive: false }).addTo(groups.labels);
+                // SG 라벨 위치 수집 (나중에 평균 위치에 한 번만 표시)
+                const mid = bezierPts[Math.floor(bezierPts.length / 2)];
+                if (!sgMidpoints.has(conn.signal)) {
+                    sgMidpoints.set(conn.signal, { lats: [], lngs: [], color: sgColor });
+                }
+                const entry = sgMidpoints.get(conn.signal);
+                entry.lats.push(mid.lat);
+                entry.lngs.push(mid.lng);
             });
 
             lane._casing = casing;
@@ -1835,6 +1901,19 @@
                     if (state.editingId === lane.id) scheduleRefresh(['sidebar']);
                 });
             });
+        });
+
+        // 신호그룹 라벨: 신호 ID별 평균 위치에 한 번만 표시
+        sgMidpoints.forEach((entry, signal) => {
+            const avgLat = entry.lats.reduce((a, b) => a + b, 0) / entry.lats.length;
+            const avgLng = entry.lngs.reduce((a, b) => a + b, 0) / entry.lngs.length;
+            const sgIcon = L.divIcon({
+                className: 'sg-label',
+                html: `<div class="sg-label-container" style="background:${entry.color}cc;">SG:${signal}</div>`,
+                iconSize: [40, 20],
+                iconAnchor: [20, 10]
+            });
+            L.marker([avgLat, avgLng], { icon: sgIcon, interactive: false }).addTo(groups.labels);
         });
     }
 
