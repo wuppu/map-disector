@@ -285,15 +285,9 @@
             border: 1.5px solid rgba(255,255,255,0.5);
             pointer-events: none;
         }
-        .map-name-label {
-            overflow: visible !important;
-            background: none !important;
-            border: none !important;
-        }
-        .map-name-container {
-            position: absolute;
-            left: 0; top: 0;
-            transform: translate(-50%, calc(-100% - 16px));
+        #map-name-display {
+            position: absolute; top: 16px; right: 16px; z-index: 1500;
+            display: none;
             color: #fff; background: rgba(8, 12, 26, 0.92);
             font-family: var(--font); font-size: 16px; font-weight: 900;
             letter-spacing: -0.03em; white-space: nowrap;
@@ -469,6 +463,7 @@
 </div>
 
 <div id="map"></div>
+<div id="map-name-display"></div>
 
 <script>
     const map = L.map('map', { zoomControl: false }).setView([36.5, 127.5], 18);
@@ -1681,20 +1676,17 @@
         groups.labels.clearLayers();
         groups.nodes.clearLayers();
 
+        // MAP 이름: 오른쪽 상단 고정 div 업데이트
+        const nameEl = document.getElementById('map-name-display');
+        if (nameEl) {
+            const mapName = state.intersectionInfo.name;
+            nameEl.textContent = mapName || '';
+            nameEl.style.display = mapName ? 'block' : 'none';
+        }
+
         if(state.refPoint) {
             L.circleMarker([state.refPoint.lat, state.refPoint.lng], { radius: 8, color: '#fff', fillColor: '#fbbf24', fillOpacity: 1 }).addTo(groups.lanes).bindTooltip("REF");
 
-            // MAP name label
-            const mapName = state.intersectionInfo.name;
-            if (mapName) {
-                const nameIcon = L.divIcon({
-                    className: 'map-name-label',
-                    html: `<div class="map-name-container">${mapName}</div>`,
-                    iconSize: [1, 1],
-                    iconAnchor: [0, 0]
-                });
-                L.marker([state.refPoint.lat, state.refPoint.lng], { icon: nameIcon, interactive: false }).addTo(groups.labels);
-            }
         }
 
         // SG 라벨 중복 방지: 신호그룹별로 midpoint 모아서 평균 위치에 한 번만 그림
@@ -1758,13 +1750,13 @@
                 // 흰 케이싱 (하단) → 컬러 선 (상단): 겹쳐도 각 SG가 명확히 구분됨
                 L.polyline(bezierPts, {
                     color: '#ffffff',
-                    weight: 10,
-                    opacity: 0.55,
+                    weight: 6,
+                    opacity: 0.5,
                     dashArray: '8, 8'
                 }).addTo(groups.connections);
                 L.polyline(bezierPts, {
                     color: sgColor,
-                    weight: 6,
+                    weight: 4,
                     opacity: 0.95,
                     dashArray: '8, 8'
                 }).addTo(groups.connections);
