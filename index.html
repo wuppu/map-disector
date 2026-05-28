@@ -1345,9 +1345,12 @@
 
     function downloadNormalizationLog(logData) {
         const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(logData, null, 2));
+        const name = (state.intersectionInfo.name || state.intersectionInfo.id || 'export')
+            .toString().replace(/[\\/:*?"<>|]/g, '_');
+        const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
         const downloadAnchorNode = document.createElement('a');
         downloadAnchorNode.setAttribute("href", dataStr);
-        downloadAnchorNode.setAttribute("download", `normalization_log_${state.intersectionInfo.id || 'export'}.json`);
+        downloadAnchorNode.setAttribute("download", `normalization_log_${name}_${date}.json`);
         document.body.appendChild(downloadAnchorNode);
         downloadAnchorNode.click();
         downloadAnchorNode.remove();
