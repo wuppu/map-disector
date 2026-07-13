@@ -1461,7 +1461,10 @@
         if (!hex) return new Array(length).fill(false);
         const val = parseInt(hex, 16);
         if (isNaN(val)) return new Array(length).fill(false);
-        const binStr = val.toString(2).padStart(length, '0');
+        // hex 자릿수(4자리=16비트)만큼 앞을 0으로 채운 뒤 length 비트를 읽음
+        // padStart(length)만 쓰면 "4000"→15비트 이진수에서 선행 0이 빠져 항상 bit[0]=1이 되는 버그 발생
+        const fullBits = Math.max(hex.length * 4, length);
+        const binStr = val.toString(2).padStart(fullBits, '0');
         const bits = [];
         for (let i = 0; i < length; i++) bits.push(binStr[i] === '1');
         return bits;
