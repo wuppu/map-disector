@@ -1897,8 +1897,13 @@
         drawSignalGroupLabels(sgLabelItems);
     }
 
+    const SG_LABEL_MIN_ZOOM = 17; // 이 줌 미만으로 축소하면 SG 라벨을 계산·표시하지 않음
+
     // SG 라벨을 화면 픽셀 좌표에서 서로 겹치지 않게 배치
     function drawSignalGroupLabels(labelItems) {
+        // 너무 축소된 상태에서는 라벨이 뭉치므로 계산 자체를 생략
+        if (map.getZoom() < SG_LABEL_MIN_ZOOM) return;
+
         const STEP     = 3;   // 회피 이동 최소 단위 (px) — 겨우 벗어날 만큼만
         const LABEL_H  = 22;  // 라벨 실제 렌더 높이(line-height 19 + border 3)
         // 신호번호 자릿수에 따른 실제 라벨 폭 추정 (min-width 20, padding 14, border 3)
@@ -2026,8 +2031,17 @@
     });
 
     // 줌 변경 시 현재 확대 레벨 기준으로 SG 라벨 겹침/dedup 재계산
+    // 임계 줌을 오가는 경우에만 다시 그리면 되지만, 안전하게 매 줌마다 재계산
+    let _lastLabelZoom = null;
     map.on('zoomend', () => {
         if (state.isDrawing || state.uiLanes.length === 0) return;
+        const z = map.getZoom();
+        // 임계값 아래에서 계속 축소/확대할 때는 라벨이 어차피 없으므로 재계산 생략
+        if (z < SG_LABEL_MIN_ZOOM && _lastLabelZoom !== null && _lastLabelZoom < SG_LABEL_MIN_ZOOM) {
+            _lastLabelZoom = z;
+            return;
+        }
+        _lastLabelZoom = z;
         scheduleRefresh(['visuals']);
     });
 
