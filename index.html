@@ -166,7 +166,21 @@
             display: flex; justify-content: space-between; align-items: center;
             cursor: pointer;
         }
-        .card-title { font-weight: 700; font-size: 13px; letter-spacing: -0.02em; display: flex; align-items: center; gap: 9px; }
+        .card-title { font-weight: 700; font-size: 13px; letter-spacing: -0.02em; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .card-meta {
+            font-size: 10.5px; font-weight: 400; color: var(--text-faint);
+            letter-spacing: 0.01em; font-variant-numeric: tabular-nums;
+        }
+        .lane-name-chip {
+            font-size: 10px; font-weight: 600; color: var(--text-sub);
+            background: var(--bg-elev-2); border: 1px solid var(--border);
+            padding: 1px 7px; border-radius: 20px; letter-spacing: -0.01em;
+            max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .sg-swatch {
+            width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0;
+            border: 1px solid rgba(255,255,255,0.35); box-shadow: 0 0 0 1px rgba(0,0,0,0.3);
+        }
 
         .edit-form { padding: 14px; display: none; border-top: 1px solid var(--border); }
         .lane-card.editing .edit-form { display: block; }
@@ -177,6 +191,10 @@
             border-bottom: 1px solid var(--border);
             padding-bottom: 6px;
             display: flex; justify-content: space-between; align-items: center;
+        }
+        .section-hint {
+            font-size: 9.5px; font-weight: 400; color: var(--text-faint);
+            text-transform: none; letter-spacing: 0;
         }
         .form-row  { display: flex; gap: 10px; margin-bottom: 9px; align-items: center; }
         .form-col  { flex: 1; display: flex; flex-direction: column; gap: 5px; }
@@ -510,6 +528,12 @@
         "maneuverLeftTurnOnRedAllowed", "maneuverRightTurnOnRedAllowed", "maneuverLaneChangeAllowed",
         "maneuverNoStoppingAllowed", "yieldAllwaysRequired", "goWithHalt", "caution", "reserved1"
     ];
+    // 체크박스에 표시할 읽기 쉬운 라벨
+    const MANEUVER_LABELS = [
+        "Straight", "Left", "Right", "U-Turn",
+        "Left on Red", "Right on Red", "Lane Change",
+        "No Stopping", "Yield", "Go w/ Halt", "Caution", "Reserved"
+    ];
 
     const CONN_OPTIONS = [
         { label: "Straight (8000)", value: "8000" },
@@ -526,21 +550,43 @@
         { label: "Reserved (0010)", value: "0010" }
     ];
 
-    // 신호그룹 색상: 색상환 균등 분포, 위성 배경에서 명확히 구분되도록 채도·명도 최대화
-    const SG_COLORS = [
-        '#FF3B30', // 1 - 빨강
-        '#FF9F0A', // 2 - 주황
-        '#FFD60A', // 3 - 노랑
-        '#34C759', // 4 - 초록
-        '#30D158', // 5 - 라임
-        '#5AC8FA', // 6 - 하늘
-        '#007AFF', // 7 - 파랑
-        '#5E5CE6', // 8 - 인디고
-        '#BF5AF2', // 9 - 보라
-        '#FF375F', // 10 - 핫핑크
-        '#FF6B35', // 11 - 레드오렌지
-        '#00C7BE', // 12 - 청록
-    ];
+    // 신호그룹 색상 폴백(데이터 없을 때) — 실제로는 buildSgColorMap으로 동적 생성
+    const SG_COLORS = ['#FF3B30', '#FF9F0A', '#FFD60A', '#34C759', '#5AC8FA', '#007AFF', '#5E5CE6', '#BF5AF2', '#FF375F', '#00C7BE'];
+
+    function hslToHex(h, s, l) {
+        s /= 100; l /= 100;
+        const k = n => (n + h / 30) % 12;
+        const a = s * Math.min(l, 1 - l);
+        const f = n => {
+            const c = l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+            return Math.round(255 * c).toString(16).padStart(2, '0');
+        };
+        return `#${f(0)}${f(8)}${f(4)}`;
+    }
+
+    // 현재 로드된 모든 레인의 신호그룹 색상 맵 (지도·패널 공통 사용)
+    function computeSgColorMap() {
+        const all = [];
+        state.uiLanes.forEach(l => (l.connections || []).forEach(c => {
+            if (c.signal != null) all.push(c.signal);
+        }));
+        return buildSgColorMap(all);
+    }
+
+    // 존재하는 신호그룹 ID 집합에 대해 서로 절대 겹치지 않는 색을 배정
+    // 색상환을 균등 분할(최대 최소거리) + 인접 인덱스는 명도를 교차시켜 추가 분리
+    function buildSgColorMap(signalIds) {
+        const sorted = [...new Set(signalIds)].sort((a, b) => a - b);
+        const n = sorted.length;
+        const map = new Map();
+        sorted.forEach((sig, i) => {
+            const hue = (i * 360 / Math.max(n, 1) + 12) % 360;
+            const light = (i % 2 === 0) ? 55 : 66;   // 인접 명도 교차
+            const sat = (i % 3 === 0) ? 90 : 80;
+            map.set(sig, hslToHex(hue, sat, light));
+        });
+        return map;
+    }
 
     const CONFIG = {
         metersPerLat: 111320,
@@ -918,7 +964,7 @@
                     </select>
                     <button id="btnShowAll" class="icon-btn" onclick="toggleShowAll()"
                         title="${state.showAll ? '현재 교차로만 표시' : '모든 교차로 표시'}"
-                        style="${state.showAll ? 'background:rgba(79,142,247,0.3);color:#4f8ef7;' : ''}">
+                        style="${state.showAll ? 'background:var(--primary-soft);color:var(--primary);' : ''}">
                         <i class="fa-solid fa-layer-group"></i>
                     </button>
                 </div>
@@ -971,6 +1017,7 @@
         }
 
         container.innerHTML = '';
+        const sgColorMap = computeSgColorMap();
         if (state.uiLanes.length === 0) {
             container.innerHTML = `
                 <div class="empty-state">
@@ -1035,14 +1082,24 @@
             });
             nodesHtml += '</div>';
 
+            const connCount = lane.connections.length;
+            const nodeCount = lane.points.length;
+            const metaBits = [`${nodeCount} node${nodeCount !== 1 ? 's' : ''}`];
+            if (lane.direction === '80') metaBits.push(`${connCount} conn${connCount !== 1 ? 's' : ''}`);
+            if (lane.approachID > 0) metaBits.push(`Appr ${lane.approachID}`);
+
             el.innerHTML = `
                 <div class="card-header" onclick="selectLane(${lane.id})">
-                    <span class="card-title">
-                        Lane ${lane.id}
-                        <span class="badge ${badgeClass}">${badgeText}</span>
-                    </span>
-                    <div style="display:flex;gap:2px;">
-                        <button class="icon-btn" title="Edit"><i class="fa-solid fa-pen fa-xs"></i></button>
+                    <div style="display:flex; flex-direction:column; gap:3px; min-width:0;">
+                        <span class="card-title">
+                            Lane ${lane.id}
+                            <span class="badge ${badgeClass}">${badgeText}</span>
+                            ${lane.name ? `<span class="lane-name-chip">${lane.name}</span>` : ''}
+                        </span>
+                        <span class="card-meta">${metaBits.join('  ·  ')}</span>
+                    </div>
+                    <div style="display:flex;gap:2px; flex-shrink:0;">
+                        <button class="icon-btn" title="${isEditing ? 'Collapse' : 'Edit'}"><i class="fa-solid ${isEditing ? 'fa-chevron-up' : 'fa-pen'} fa-xs"></i></button>
                         <button class="icon-btn del" title="Delete" onclick="deleteLane(${lane.id}, event)"><i class="fa-solid fa-xmark fa-xs"></i></button>
                     </div>
                 </div>
@@ -1105,12 +1162,15 @@
                         </div>
                     </div>
 
-                    <div class="section-title">Maneuvers</div>
+                    <div class="section-title">
+                        Maneuvers
+                        <span class="section-hint">Normalize 시 연결에서 자동 반영</span>
+                    </div>
                     <div class="checkbox-grid">
                         ${MANEUVERS.map((m, idx) => `
                             <label class="checkbox-item">
                                 <input type="checkbox" ${lane.maneuvers?.[idx] ? 'checked' : ''} onchange="updateManeuver(${lane.id}, ${idx}, this.checked)">
-                                ${m.replace('maneuver','').replace('Allowed','')}
+                                ${MANEUVER_LABELS[idx] || m}
                             </label>
                         `).join('')}
                     </div>
@@ -1120,15 +1180,30 @@
                         <button class="btn btn-blue btn-sm" onclick="addConnection(${lane.id})"><i class="fa-solid fa-plus fa-xs" style="margin-right:4px;"></i>Add</button>
                     </div>
                     <div class="conn-list">
-                        ${lane.connections.map((conn, cIdx) => `
+                        ${lane.connections.map((conn, cIdx) => {
+                            const destOptions = state.uiLanes
+                                .filter(l => l.id !== lane.id)
+                                .map(l => {
+                                    const dirTag = l.direction === '40' ? 'out' : l.direction === '80' ? 'in' : '-';
+                                    return `<option value="${l.id}" ${conn.lane === l.id ? 'selected' : ''}>Lane ${l.id} (${dirTag})</option>`;
+                                }).join('');
+                            const destKnown = state.uiLanes.some(l => l.id === conn.lane && l.id !== lane.id);
+                            const sgColor = sgColorMap.get(conn.signal) || '#a8a29e';
+                            return `
                             <div class="conn-item">
-                                <div class="form-col" style="width:50px;">
-                                    <span class="form-label">To</span>
-                                    <input type="number" class="form-input" value="${conn.lane}" onchange="updateConnection(${lane.id}, ${cIdx}, 'lane', parseInt(this.value))">
+                                <div class="form-col" style="width:96px;">
+                                    <span class="form-label">To Lane</span>
+                                    <select class="form-input" onchange="updateConnection(${lane.id}, ${cIdx}, 'lane', parseInt(this.value))">
+                                        ${!destKnown ? `<option value="${conn.lane}" selected>Lane ${conn.lane} (?)</option>` : ''}
+                                        ${destOptions}
+                                    </select>
                                 </div>
-                                <div class="form-col" style="width:50px;">
+                                <div class="form-col" style="width:64px;">
                                     <span class="form-label">Signal</span>
-                                    <input type="number" class="form-input" value="${conn.signal}" onchange="updateConnection(${lane.id}, ${cIdx}, 'signal', parseInt(this.value))">
+                                    <div style="display:flex; align-items:center; gap:6px;">
+                                        <span class="sg-swatch" style="background:${sgColor};"></span>
+                                        <input type="number" class="form-input" style="padding-left:6px;" value="${conn.signal}" onchange="updateConnection(${lane.id}, ${cIdx}, 'signal', parseInt(this.value))">
+                                    </div>
                                 </div>
                                 <div class="form-col" style="flex:1;">
                                     <span class="form-label">Maneuver</span>
@@ -1141,9 +1216,9 @@
                                     </select>
                                 </div>
                                 <button class="icon-btn del" onclick="removeConnection(${lane.id}, ${cIdx})"><i class="fa-solid fa-xmark fa-xs"></i></button>
-                            </div>
-                        `).join('')}
-                        ${lane.connections.length === 0 ? '<span style="color:#666; font-size:11px;">No connections</span>' : ''}
+                            </div>`;
+                        }).join('')}
+                        ${lane.connections.length === 0 ? '<span style="color:var(--text-faint); font-size:11px;">No connections</span>' : ''}
                     </div>
 
                     <div class="section-title">Nodes Data</div>
@@ -1620,8 +1695,11 @@
 
         }
 
-        // SG 라벨 중복 방지: 신호그룹별로 midpoint 모아서 평균 위치에 한 번만 그림
-        const sgMidpoints = new Map(); // signal → { lats:[], lngs:[], color }
+        // 존재하는 모든 신호그룹 ID → 절대 겹치지 않는 색 배정 (패널과 공통)
+        const sgColorMap = computeSgColorMap();
+
+        // SG 라벨: 신호그룹별로 "시작 지점"들을 모아 한 번만 그림 (겹치면 위치 이동)
+        const sgAnchors = new Map(); // signal → { lats:[], lngs:[], color }
 
         state.uiLanes.forEach(lane => {
             if (lane.points.length === 0) return;
@@ -1676,7 +1754,7 @@
                 const P1 = getIntersectionPoint(A, B, C, D);
                 const bezierPts = generateBezier(B, P1, C, 20);
 
-                const sgColor = SG_COLORS[conn.signal % SG_COLORS.length] || '#a8a29e';
+                const sgColor = sgColorMap.get(conn.signal) || '#a8a29e';
 
                 // 흰 케이싱 (하단) → 컬러 선 (상단): 겹쳐도 각 SG가 명확히 구분됨
                 L.polyline(bezierPts, {
@@ -1692,14 +1770,15 @@
                     dashArray: '8, 8'
                 }).addTo(groups.connections);
 
-                // SG 라벨 위치 수집 (나중에 평균 위치에 한 번만 표시)
-                const mid = bezierPts[Math.floor(bezierPts.length / 2)];
-                if (!sgMidpoints.has(conn.signal)) {
-                    sgMidpoints.set(conn.signal, { lats: [], lngs: [], color: sgColor });
+                // SG 라벨 위치: 곡선의 "시작 부분"(진입 정지선 근처)에 가깝게 잡음
+                const startIdx = Math.min(bezierPts.length - 1, Math.round(bezierPts.length * 0.18));
+                const startPt = bezierPts[startIdx];
+                if (!sgAnchors.has(conn.signal)) {
+                    sgAnchors.set(conn.signal, { lats: [], lngs: [], color: sgColor });
                 }
-                const entry = sgMidpoints.get(conn.signal);
-                entry.lats.push(mid.lat);
-                entry.lngs.push(mid.lng);
+                const entry = sgAnchors.get(conn.signal);
+                entry.lats.push(startPt.lat);
+                entry.lngs.push(startPt.lng);
             });
 
             lane._casing = casing;
@@ -1815,55 +1894,50 @@
             });
         });
 
-        // 신호그룹 라벨: 신호 ID별 평균 위치에 한 번만 표시 (픽셀 좌표 충돌 회피)
-        drawSignalGroupLabels(sgMidpoints);
+        // 신호그룹 라벨: 시작 지점 근처에 표시 (픽셀 좌표 충돌 회피)
+        drawSignalGroupLabels(sgAnchors);
     }
 
     // SG 라벨을 화면 픽셀 좌표에서 서로 겹치지 않게 배치
-    function drawSignalGroupLabels(sgMidpoints) {
+    function drawSignalGroupLabels(sgAnchors) {
         const GAP_X = 58;   // 라벨 최소 수평 간격 (px)
-        const GAP_Y = 27;   // 라벨 최소 수직 간격 (px)
-        const STEP  = 26;   // 회피 시 이동 단위 (px)
+        const GAP_Y = 26;   // 라벨 최소 수직 간격 (px)
 
-        // 신호별 앵커(평균 위치)를 픽셀로 변환
+        // 신호별 앵커(시작 지점 평균)를 픽셀로 변환
         const items = [];
-        sgMidpoints.forEach((entry, signal) => {
+        sgAnchors.forEach((entry, signal) => {
             const avgLat = entry.lats.reduce((a, b) => a + b, 0) / entry.lats.length;
             const avgLng = entry.lngs.reduce((a, b) => a + b, 0) / entry.lngs.length;
             const anchor = map.latLngToLayerPoint([avgLat, avgLng]);
             items.push({ signal, color: entry.color, anchor });
         });
 
-        // 앵커 위치가 안정적으로 배치되도록 좌→우, 상→하 정렬
+        // 앵커 위치가 안정적으로 배치되도록 상→하, 좌→우 정렬
         items.sort((a, b) => (a.anchor.y - b.anchor.y) || (a.anchor.x - b.anchor.x));
-
-        // 나선형 후보 오프셋 (앵커에서 점점 멀어지며 빈 자리 탐색)
-        const candidates = [{ x: 0, y: 0 }];
-        for (let r = 1; r <= 6; r++) {
-            candidates.push({ x: 0, y: -r * STEP });   // 위
-            candidates.push({ x: 0, y:  r * STEP });   // 아래
-            candidates.push({ x:  r * GAP_X * 0.6, y: 0 }); // 오른쪽
-            candidates.push({ x: -r * GAP_X * 0.6, y: 0 }); // 왼쪽
-            candidates.push({ x:  r * GAP_X * 0.5, y: -r * STEP });
-            candidates.push({ x: -r * GAP_X * 0.5, y:  r * STEP });
-        }
 
         const placed = []; // 확정된 라벨 중심 픽셀 좌표
         const collides = (px, py) =>
             placed.some(p => Math.abs(p.x - px) < GAP_X && Math.abs(p.y - py) < GAP_Y);
 
+        // 앵커에서 타원형 링을 넓혀가며 빈 자리를 반드시 찾음 (겹침 절대 방지)
+        function findFreeSpot(anchor) {
+            if (!collides(anchor.x, anchor.y)) return { x: anchor.x, y: anchor.y, off: { x: 0, y: 0 } };
+            for (let r = 1; r <= 60; r++) {
+                const samples = 8 + r * 2;
+                for (let k = 0; k < samples; k++) {
+                    const ang = (k / samples) * 2 * Math.PI;
+                    const ox = Math.cos(ang) * r * (GAP_X * 0.55);
+                    const oy = Math.sin(ang) * r * (GAP_Y * 0.95);
+                    if (!collides(anchor.x + ox, anchor.y + oy)) {
+                        return { x: anchor.x + ox, y: anchor.y + oy, off: { x: ox, y: oy } };
+                    }
+                }
+            }
+            return { x: anchor.x, y: anchor.y, off: { x: 0, y: 0 } };
+        }
+
         items.forEach(item => {
-            let pos = null;
-            for (const c of candidates) {
-                const px = item.anchor.x + c.x;
-                const py = item.anchor.y + c.y;
-                if (!collides(px, py)) { pos = { x: px, y: py, off: c }; break; }
-            }
-            // 전부 충돌하면 마지막 후보로 강제 배치
-            if (!pos) {
-                const c = candidates[candidates.length - 1];
-                pos = { x: item.anchor.x + c.x, y: item.anchor.y + c.y, off: c };
-            }
+            const pos = findFreeSpot(item.anchor);
             placed.push({ x: pos.x, y: pos.y });
 
             const labelLatLng = map.layerPointToLatLng([pos.x, pos.y]);
