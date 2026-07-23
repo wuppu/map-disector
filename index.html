@@ -1915,10 +1915,14 @@
         // 앵커 위치가 안정적으로 배치되도록 상→하, 좌→우 정렬
         items.sort((a, b) => (a.anchor.y - b.anchor.y) || (a.anchor.x - b.anchor.x));
 
-        const placed = []; // 확정된 라벨 { x, y, w }
+        const placed = []; // 확정된 라벨 { x, y, w, signal }
         // 폭 인식 충돌: 두 라벨의 실제 사각형이 닿을 때만 겹침으로 판정 → 최대 밀착
         const collides = (px, py, w) =>
             placed.some(p => Math.abs(p.x - px) < (p.w + w) / 2 && Math.abs(p.y - py) < LABEL_H);
+        // 같은 번호 라벨이 앵커에서 이미 겹치는지 (겹치면 새로 그리지 않고 하나만 표시)
+        const sameNumberOverlap = (px, py, w, signal) =>
+            placed.some(p => p.signal === signal &&
+                Math.abs(p.x - px) < (p.w + w) / 2 && Math.abs(p.y - py) < LABEL_H);
 
         // 앵커에서 아주 작은 단위로만 링을 넓혀가며 가장 가까운 빈 자리를 찾음
         function findFreeSpot(anchor, w) {
@@ -1938,8 +1942,11 @@
         }
 
         items.forEach(item => {
+            // 같은 번호가 앵커 위치에서 이미 겹치면 새로 그리지 않고 하나만 표시
+            if (sameNumberOverlap(item.anchor.x, item.anchor.y, item.w, item.signal)) return;
+
             const pos = findFreeSpot(item.anchor, item.w);
-            placed.push({ x: pos.x, y: pos.y, w: item.w });
+            placed.push({ x: pos.x, y: pos.y, w: item.w, signal: item.signal });
 
             const labelLatLng = map.layerPointToLatLng([pos.x, pos.y]);
 
@@ -2016,6 +2023,12 @@
         state.tempPoints.push(e.latlng);
         L.circleMarker(e.latlng, { radius: 4, color: '#10b981', fillOpacity: 1 }).addTo(groups.temp);
         if(state.tempPoints.length > 1) L.polyline(state.tempPoints, { color: '#10b981', dashArray: '5,5' }).addTo(groups.temp);
+    });
+
+    // 줌 변경 시 현재 확대 레벨 기준으로 SG 라벨 겹침/dedup 재계산
+    map.on('zoomend', () => {
+        if (state.isDrawing || state.uiLanes.length === 0) return;
+        scheduleRefresh(['visuals']);
     });
 
     setTimeout(() => { map.invalidateSize(); parseAndRender(); }, 500);
