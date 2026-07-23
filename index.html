@@ -1899,34 +1899,37 @@
 
     // SG 라벨을 화면 픽셀 좌표에서 서로 겹치지 않게 배치
     function drawSignalGroupLabels(labelItems) {
-        const GAP_X = 22;   // 실제 겹칠 때만 감지되도록 라벨 크기에 밀착
-        const GAP_Y = 17;
-        const STEP  = 4;    // 회피 이동 최소 단위 (px) — 겨우 벗어날 만큼만 이동
+        const STEP     = 3;   // 회피 이동 최소 단위 (px) — 겨우 벗어날 만큼만
+        const LABEL_H  = 22;  // 라벨 실제 렌더 높이(line-height 19 + border 3)
+        // 신호번호 자릿수에 따른 실제 라벨 폭 추정 (min-width 20, padding 14, border 3)
+        const labelW = sig => Math.max(20, String(sig).length * 6.8 + 17);
 
-        // 각 연결선 시작 지점을 픽셀로 변환
+        // 각 연결선 시작 지점을 픽셀로 변환 + 라벨 폭 계산
         const items = labelItems.map(it => ({
             signal: it.signal,
             color: it.color,
+            w: labelW(it.signal),
             anchor: map.latLngToLayerPoint([it.lat, it.lng])
         }));
 
         // 앵커 위치가 안정적으로 배치되도록 상→하, 좌→우 정렬
         items.sort((a, b) => (a.anchor.y - b.anchor.y) || (a.anchor.x - b.anchor.x));
 
-        const placed = []; // 확정된 라벨 중심 픽셀 좌표
-        const collides = (px, py) =>
-            placed.some(p => Math.abs(p.x - px) < GAP_X && Math.abs(p.y - py) < GAP_Y);
+        const placed = []; // 확정된 라벨 { x, y, w }
+        // 폭 인식 충돌: 두 라벨의 실제 사각형이 닿을 때만 겹침으로 판정 → 최대 밀착
+        const collides = (px, py, w) =>
+            placed.some(p => Math.abs(p.x - px) < (p.w + w) / 2 && Math.abs(p.y - py) < LABEL_H);
 
         // 앵커에서 아주 작은 단위로만 링을 넓혀가며 가장 가까운 빈 자리를 찾음
-        function findFreeSpot(anchor) {
-            if (!collides(anchor.x, anchor.y)) return { x: anchor.x, y: anchor.y, off: { x: 0, y: 0 } };
-            for (let r = 1; r <= 200; r++) {
+        function findFreeSpot(anchor, w) {
+            if (!collides(anchor.x, anchor.y, w)) return { x: anchor.x, y: anchor.y, off: { x: 0, y: 0 } };
+            for (let r = 1; r <= 300; r++) {
                 const samples = 8 + r;
                 for (let k = 0; k < samples; k++) {
                     const ang = (k / samples) * 2 * Math.PI;
                     const ox = Math.cos(ang) * r * STEP;
                     const oy = Math.sin(ang) * r * STEP;
-                    if (!collides(anchor.x + ox, anchor.y + oy)) {
+                    if (!collides(anchor.x + ox, anchor.y + oy, w)) {
                         return { x: anchor.x + ox, y: anchor.y + oy, off: { x: ox, y: oy } };
                     }
                 }
@@ -1935,8 +1938,8 @@
         }
 
         items.forEach(item => {
-            const pos = findFreeSpot(item.anchor);
-            placed.push({ x: pos.x, y: pos.y });
+            const pos = findFreeSpot(item.anchor, item.w);
+            placed.push({ x: pos.x, y: pos.y, w: item.w });
 
             const labelLatLng = map.layerPointToLatLng([pos.x, pos.y]);
 
