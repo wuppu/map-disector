@@ -1903,12 +1903,11 @@
         const GAP_X = 58;   // 라벨 최소 수평 간격 (px)
         const GAP_Y = 26;   // 라벨 최소 수직 간격 (px)
 
-        // 신호별 앵커(시작 지점 평균)를 픽셀로 변환
+        // 신호별 앵커: 첫 연결의 시작 지점(실제 정지선 근처)을 사용
+        // 평균을 쓰면 한 신호가 여러 연결에 걸릴 때 중점으로 밀려 보이므로 평균 금지
         const items = [];
         sgAnchors.forEach((entry, signal) => {
-            const avgLat = entry.lats.reduce((a, b) => a + b, 0) / entry.lats.length;
-            const avgLng = entry.lngs.reduce((a, b) => a + b, 0) / entry.lngs.length;
-            const anchor = map.latLngToLayerPoint([avgLat, avgLng]);
+            const anchor = map.latLngToLayerPoint([entry.lats[0], entry.lngs[0]]);
             items.push({ signal, color: entry.color, anchor });
         });
 
