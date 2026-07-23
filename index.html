@@ -316,13 +316,13 @@
         .sg-label-container {
             position: absolute; left: 0; top: 0;
             transform: translate(-50%, -50%);
-            width: max-content; box-sizing: border-box;
-            color: #fff; border-radius: 6px;
+            width: max-content; min-width: 20px; box-sizing: border-box;
+            color: #fff; border-radius: 20px;
             font-family: var(--font); font-size: 11.5px; font-weight: 700;
-            letter-spacing: 0.02em;
-            text-align: center; line-height: 21px; white-space: nowrap;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.7);
-            padding: 0 9px;
+            letter-spacing: 0.01em;
+            text-align: center; line-height: 19px; white-space: nowrap;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.7);
+            padding: 0 7px;
             text-shadow: 0 1px 2px rgba(0,0,0,0.85);
             border: 1.5px solid rgba(255,255,255,0.85);
             pointer-events: none;
@@ -1774,8 +1774,8 @@
                     dashArray: '8, 8'
                 }).addTo(groups.connections);
 
-                // SG 라벨 위치: 곡선의 "시작 부분"(진입 정지선 근처)에 가깝게 잡음
-                const startIdx = Math.min(bezierPts.length - 1, Math.round(bezierPts.length * 0.18));
+                // SG 라벨 위치: 곡선의 시작(진입 정지선)에 최대한 밀착
+                const startIdx = Math.min(bezierPts.length - 1, Math.round(bezierPts.length * 0.08));
                 const startPt = bezierPts[startIdx];
                 if (!sgAnchors.has(conn.signal)) {
                     sgAnchors.set(conn.signal, { lats: [], lngs: [], color: sgColor });
@@ -1904,8 +1904,8 @@
 
     // SG 라벨을 화면 픽셀 좌표에서 서로 겹치지 않게 배치
     function drawSignalGroupLabels(sgAnchors) {
-        const GAP_X = 66;   // 라벨 최소 수평 간격 (px, 자릿수 여유 포함)
-        const GAP_Y = 26;   // 라벨 최소 수직 간격 (px)
+        const GAP_X = 30;   // 라벨 최소 수평 간격 (px) — 숫자만이라 작게 → 라인에 밀착
+        const GAP_Y = 22;   // 라벨 최소 수직 간격 (px)
 
         // 신호별 앵커: 첫 연결의 시작 지점(실제 정지선 근처)을 사용
         // 평균을 쓰면 한 신호가 여러 연결에 걸릴 때 중점으로 밀려 보이므로 평균 금지
@@ -1960,7 +1960,7 @@
 
             const sgIcon = L.divIcon({
                 className: 'sg-label',
-                html: `<div class="sg-label-container" style="background:${item.color}ee;">SG:${item.signal}</div>`,
+                html: `<div class="sg-label-container" style="background:${item.color}ee;">${item.signal}</div>`,
                 iconSize: [0, 0],
                 iconAnchor: [0, 0]
             });
