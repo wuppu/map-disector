@@ -1899,8 +1899,9 @@
 
     // SG 라벨을 화면 픽셀 좌표에서 서로 겹치지 않게 배치
     function drawSignalGroupLabels(labelItems) {
-        const GAP_X = 30;   // 라벨 최소 수평 간격 (px) — 숫자만이라 작게 → 라인에 밀착
-        const GAP_Y = 22;   // 라벨 최소 수직 간격 (px)
+        const GAP_X = 22;   // 실제 겹칠 때만 감지되도록 라벨 크기에 밀착
+        const GAP_Y = 17;
+        const STEP  = 4;    // 회피 이동 최소 단위 (px) — 겨우 벗어날 만큼만 이동
 
         // 각 연결선 시작 지점을 픽셀로 변환
         const items = labelItems.map(it => ({
@@ -1916,15 +1917,15 @@
         const collides = (px, py) =>
             placed.some(p => Math.abs(p.x - px) < GAP_X && Math.abs(p.y - py) < GAP_Y);
 
-        // 앵커에서 타원형 링을 넓혀가며 빈 자리를 반드시 찾음 (겹침 절대 방지)
+        // 앵커에서 아주 작은 단위로만 링을 넓혀가며 가장 가까운 빈 자리를 찾음
         function findFreeSpot(anchor) {
             if (!collides(anchor.x, anchor.y)) return { x: anchor.x, y: anchor.y, off: { x: 0, y: 0 } };
-            for (let r = 1; r <= 60; r++) {
-                const samples = 8 + r * 2;
+            for (let r = 1; r <= 200; r++) {
+                const samples = 8 + r;
                 for (let k = 0; k < samples; k++) {
                     const ang = (k / samples) * 2 * Math.PI;
-                    const ox = Math.cos(ang) * r * (GAP_X * 0.55);
-                    const oy = Math.sin(ang) * r * (GAP_Y * 0.95);
+                    const ox = Math.cos(ang) * r * STEP;
+                    const oy = Math.sin(ang) * r * STEP;
                     if (!collides(anchor.x + ox, anchor.y + oy)) {
                         return { x: anchor.x + ox, y: anchor.y + oy, off: { x: ox, y: oy } };
                     }
