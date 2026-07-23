@@ -312,7 +312,11 @@
             pointer-events: none;
             font-variant-numeric: tabular-nums;
         }
+        .sg-label { overflow: visible !important; }
         .sg-label-container {
+            position: absolute; left: 0; top: 0;
+            transform: translate(-50%, -50%);
+            width: max-content; box-sizing: border-box;
             color: #fff; border-radius: 6px;
             font-family: var(--font); font-size: 11.5px; font-weight: 700;
             letter-spacing: 0.02em;
@@ -1900,7 +1904,7 @@
 
     // SG 라벨을 화면 픽셀 좌표에서 서로 겹치지 않게 배치
     function drawSignalGroupLabels(sgAnchors) {
-        const GAP_X = 58;   // 라벨 최소 수평 간격 (px)
+        const GAP_X = 66;   // 라벨 최소 수평 간격 (px, 자릿수 여유 포함)
         const GAP_Y = 26;   // 라벨 최소 수직 간격 (px)
 
         // 신호별 앵커: 첫 연결의 시작 지점(실제 정지선 근처)을 사용
@@ -1957,8 +1961,8 @@
             const sgIcon = L.divIcon({
                 className: 'sg-label',
                 html: `<div class="sg-label-container" style="background:${item.color}ee;">SG:${item.signal}</div>`,
-                iconSize: [50, 22],
-                iconAnchor: [25, 11]
+                iconSize: [0, 0],
+                iconAnchor: [0, 0]
             });
             L.marker(labelLatLng, { icon: sgIcon, interactive: false }).addTo(groups.labels);
         });
